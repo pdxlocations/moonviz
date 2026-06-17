@@ -153,9 +153,9 @@ assert.ok(
 const greenwichUv = earthTextureUv({ latitude: 0, longitude: 0 });
 assert.ok(Math.abs(greenwichUv.u - 0.5) < 1e-12, `expected Greenwich at texture center, got u ${greenwichUv.u}`);
 const portlandUv = earthTextureUv({ latitude: 45.5152, longitude: -122.6784 });
-assert.ok(Math.abs(portlandUv.u - 0.15922666666666666) < 1e-12, `expected Portland in western hemisphere texture, got u ${portlandUv.u}`);
+assert.ok(Math.abs(portlandUv.u - 0.15922666666666666) < 1e-12, `expected Portland in western North America texture U, got u ${portlandUv.u}`);
 const tokyoUv = earthTextureUv({ latitude: 35.6764, longitude: 139.65 });
-assert.ok(Math.abs(tokyoUv.u - 0.8879166666666667) < 1e-12, `expected Tokyo in eastern hemisphere texture, got u ${tokyoUv.u}`);
+assert.ok(Math.abs(tokyoUv.u - 0.8879166666666667) < 1e-12, `expected Tokyo in eastern Asia texture U, got u ${tokyoUv.u}`);
 assert.ok(portlandUv.v > 0.5, `expected northern latitudes above texture equator, got v ${portlandUv.v}`);
 const renderedPortlandUv = renderedEarthTextureUv(portlandNightDate, { latitude: 45.5152, longitude: -122.6784 });
 assert.ok(
@@ -188,6 +188,10 @@ for (const mode of ["earth", "sun", "moon"]) {
   const observerWorld = earthLocalToWorldDirectionForMode(observerLocal, layout.earthOrientation, mode);
   const subsolarWorld = earthLocalToWorldDirectionForMode(subsolarLocal, layout.earthOrientation, mode);
   const sublunarWorld = earthLocalToWorldDirectionForMode(sublunarLocal, layout.earthOrientation, mode);
+  const textureFrameObserver = textureFrameLocalDirectionForMode(observerLocal, mode);
+  const textureUv = textureUvForMode(observerLocal, mode);
+  const markerUv = textureUvFromFrameDirection(textureFrameObserver);
+  const markerTextureLocal = renderedWorldToTextureLocal(observerWorld, layout.earthOrientation, mode);
 
   assert.ok(
     angleBetween(subsolarWorld, layout.sunDirection) < 1e-7,
@@ -203,6 +207,14 @@ for (const mode of ["earth", "sun", "moon"]) {
   assert.ok(
     Math.abs(localLitDot - worldLitDot) < 1e-12,
     `expected ${mode} mode observer day/night side to match Earth-local reference`
+  );
+  assert.ok(
+    Math.abs(textureUv.u - markerUv.u) < 1e-12 && Math.abs(textureUv.v - markerUv.v) < 1e-12,
+    `expected ${mode} mode observer texture UV to match marker frame`
+  );
+  assert.ok(
+    angleBetween(markerTextureLocal, observerLocal) < 1e-12,
+    `expected ${mode} mode observer marker to invert to its original texture coordinate`
   );
 
   const earthToSun = layout.sun.clone().sub(layout.earth).normalize();
@@ -232,15 +244,10 @@ function centeredLayout(date, mode) {
   const sunEarthDirection = earthLocalVector(sunSubpoint).normalize();
   const moonEarthDirection = earthLocalVector(moonSubpoint).normalize();
   const earthOrientation = earthOrientationQuaternion(date);
-  const centeredAxisScale = mode === "earth"
-    ? new THREE.Vector3(1, 1, 1)
-    : new THREE.Vector3(1, 1, -1);
   const sunCenteredFrameDirection = sunEarthDirection.clone()
-    .multiply(centeredAxisScale)
     .applyQuaternion(earthOrientation)
     .normalize();
   const moonCenteredFrameDirection = moonEarthDirection.clone()
-    .multiply(centeredAxisScale)
     .applyQuaternion(earthOrientation)
     .normalize();
 
@@ -290,12 +297,38 @@ function earthOrientationQuaternion(date) {
 }
 
 function earthLocalToWorldDirectionForMode(localDirection, orientation, mode) {
-  const adjusted = localDirection.clone();
-  if (mode !== "earth") {
-    adjusted.multiply(new THREE.Vector3(1, 1, -1));
-  }
+  return markerFrameLocalDirectionForMode(localDirection, mode)
+    .applyQuaternion(orientation)
+    .normalize();
+}
 
-  return adjusted.applyQuaternion(orientation).normalize();
+function markerFrameLocalDirectionForMode(localDirection, mode) {
+  return localDirection.clone().normalize();
+}
+
+function textureFrameLocalDirectionForMode(localDirection, mode) {
+  return localDirection.clone().normalize();
+}
+
+function textureUvForMode(localDirection, mode) {
+  return textureUvFromFrameDirection(textureFrameLocalDirectionForMode(localDirection, mode));
+}
+
+function textureUvFromFrameDirection(direction) {
+  const normalized = direction.clone().normalize();
+  const longitude = Math.atan2(-normalized.z, normalized.x);
+  const latitude = Math.asin(Math.max(-1, Math.min(1, normalized.y)));
+
+  return {
+    u: (longitude + Math.PI) / (Math.PI * 2),
+    v: 0.5 + latitude / Math.PI
+  };
+}
+
+function renderedWorldToTextureLocal(worldDirection, orientation, mode) {
+  return worldDirection.clone()
+    .applyQuaternion(orientation.clone().invert())
+    .normalize();
 }
 
 function length(vector) {
