@@ -25,6 +25,11 @@
           <span data-bearing="south">S</span>
           <span data-bearing="west">W</span>
         </div>
+        <div id="debugOverlay" class="hud debug-overlay" hidden>
+          <div class="debug-title">Debug overlay</div>
+          <pre id="debugSummary"></pre>
+          <pre id="debugVectors" hidden></pre>
+        </div>
       </section>
 
       <aside class="panel" aria-label="Date and display controls">
@@ -60,9 +65,10 @@
             <button id="spaceViewButton" type="button" aria-pressed="true">Space</button>
             <button id="povViewButton" type="button" aria-pressed="false">POV</button>
           </div>
-          <div class="segmented" role="group" aria-label="Center mode">
+          <div class="segmented center-mode" role="group" aria-label="Center mode">
             <button id="earthCenterButton" type="button" aria-pressed="true">Earth center</button>
             <button id="sunCenterButton" type="button" aria-pressed="false">Sun center</button>
+            <button id="moonCenterButton" type="button" aria-pressed="false">Moon center</button>
           </div>
           <div id="povFovControl" class="range-control" hidden>
             <label for="povFov">
@@ -86,6 +92,20 @@
             <label><input id="showObserver" type="checkbox" checked> Observer pin</label>
             <label><input id="showSubpoints" type="checkbox" checked> Subpoints</label>
           </div>
+        </div>
+
+        <div class="section controls">
+          <h2>Debug</h2>
+          <div class="check-grid">
+            <label><input id="showDebugOverlay" type="checkbox"> Show debug overlay</label>
+            <label><input id="showDebugVectors" type="checkbox"> Show vector diagnostics</label>
+          </div>
+          <label for="debugTextureSignMode">Texture longitude sign</label>
+          <select id="debugTextureSignMode">
+            <option value="auto" selected>Auto (Earth -1, Sun/Moon +1)</option>
+            <option value="-1">Force -1</option>
+            <option value="1">Force +1</option>
+          </select>
         </div>
 
         <div class="section controls">

@@ -150,17 +150,153 @@ assert.ok(
   "expected rendered Sun-centered Earth orientation to preserve daylight/night side"
 );
 
+const greenwichUv = earthTextureUv({ latitude: 0, longitude: 0 });
+assert.ok(Math.abs(greenwichUv.u - 0.5) < 1e-12, `expected Greenwich at texture center, got u ${greenwichUv.u}`);
+const portlandUv = earthTextureUv({ latitude: 45.5152, longitude: -122.6784 });
+assert.ok(Math.abs(portlandUv.u - 0.15922666666666666) < 1e-12, `expected Portland in western hemisphere texture, got u ${portlandUv.u}`);
+const tokyoUv = earthTextureUv({ latitude: 35.6764, longitude: 139.65 });
+assert.ok(Math.abs(tokyoUv.u - 0.8879166666666667) < 1e-12, `expected Tokyo in eastern hemisphere texture, got u ${tokyoUv.u}`);
+assert.ok(portlandUv.v > 0.5, `expected northern latitudes above texture equator, got v ${portlandUv.v}`);
+const renderedPortlandUv = renderedEarthTextureUv(portlandNightDate, { latitude: 45.5152, longitude: -122.6784 });
+assert.ok(
+  Math.abs(renderedPortlandUv.u - portlandUv.u) < 1e-12,
+  `expected rendered texture sampling to preserve Portland longitude, got u ${renderedPortlandUv.u}`
+);
+
 const frameRegressionDate = new Date("2026-06-17T05:30:00.000Z");
 for (const body of [solarPosition(frameRegressionDate), lunarPosition(frameRegressionDate)]) {
   const subpoint = geographicSubpoint(frameRegressionDate, body.vector);
   const reconstructedDirection = surfaceVector(frameRegressionDate, subpoint);
+  const renderedDirection = renderSurfaceVector(frameRegressionDate, subpoint);
   assert.ok(
     angleBetween(reconstructedDirection, body.vector) < 1e-7,
     "expected subpoint renderer direction to match inertial body direction"
   );
+  assert.ok(
+    angleBetween(renderedDirection, body.vector) < 1e-7,
+    "expected rendered subpoint marker direction to match inertial body direction"
+  );
+}
+
+for (const mode of ["earth", "sun", "moon"]) {
+  const layout = centeredLayout(frameRegressionDate, mode);
+  const sunSubpoint = geographicSubpoint(frameRegressionDate, solarPosition(frameRegressionDate).vector);
+  const moonSubpoint = geographicSubpoint(frameRegressionDate, lunarPosition(frameRegressionDate).vector);
+  const observerLocal = earthLocalVector({ latitude: 45.5152, longitude: -122.6784 });
+  const subsolarLocal = earthLocalVector(sunSubpoint);
+  const sublunarLocal = earthLocalVector(moonSubpoint);
+  const observerWorld = earthLocalToWorldDirectionForMode(observerLocal, layout.earthOrientation, mode);
+  const subsolarWorld = earthLocalToWorldDirectionForMode(subsolarLocal, layout.earthOrientation, mode);
+  const sublunarWorld = earthLocalToWorldDirectionForMode(sublunarLocal, layout.earthOrientation, mode);
+
+  assert.ok(
+    angleBetween(subsolarWorld, layout.sunDirection) < 1e-7,
+    `expected ${mode} mode subsolar marker direction to align with Sun direction`
+  );
+  assert.ok(
+    angleBetween(sublunarWorld, layout.moonDirection) < 1e-7,
+    `expected ${mode} mode sublunar marker direction to align with Moon direction`
+  );
+
+  const localLitDot = observerLocal.dot(subsolarLocal);
+  const worldLitDot = observerWorld.dot(layout.sunDirection);
+  assert.ok(
+    Math.abs(localLitDot - worldLitDot) < 1e-12,
+    `expected ${mode} mode observer day/night side to match Earth-local reference`
+  );
+
+  const earthToSun = layout.sun.clone().sub(layout.earth).normalize();
+  const earthToMoon = layout.moon.clone().sub(layout.earth).normalize();
+  assert.ok(
+    angleBetween(earthToSun, layout.sunDirection) < 1e-7,
+    `expected ${mode} mode Earth-to-Sun vector to match layout Sun direction`
+  );
+  assert.ok(
+    angleBetween(earthToMoon, layout.moonDirection) < 1e-7,
+    `expected ${mode} mode Earth-to-Moon vector to match layout Moon direction`
+  );
 }
 
 console.log("astro tests passed");
+
+function centeredLayout(date, mode) {
+  const EARTH_CENTER_SUN_DISTANCE = 6.8;
+  const EARTH_CENTER_MOON_DISTANCE = 2.15;
+  const SUN_CENTER_EARTH_DISTANCE = 3.9;
+  const SUN_CENTER_MOON_DISTANCE = 1.35;
+  const MOON_CENTER_EARTH_DISTANCE = 2.15;
+  const MOON_CENTER_SUN_DISTANCE = 6.8;
+
+  const sunSubpoint = geographicSubpoint(date, solarPosition(date).vector);
+  const moonSubpoint = geographicSubpoint(date, lunarPosition(date).vector);
+  const sunEarthDirection = earthLocalVector(sunSubpoint).normalize();
+  const moonEarthDirection = earthLocalVector(moonSubpoint).normalize();
+  const earthOrientation = earthOrientationQuaternion(date);
+  const centeredAxisScale = mode === "earth"
+    ? new THREE.Vector3(1, 1, 1)
+    : new THREE.Vector3(1, 1, -1);
+  const sunCenteredFrameDirection = sunEarthDirection.clone()
+    .multiply(centeredAxisScale)
+    .applyQuaternion(earthOrientation)
+    .normalize();
+  const moonCenteredFrameDirection = moonEarthDirection.clone()
+    .multiply(centeredAxisScale)
+    .applyQuaternion(earthOrientation)
+    .normalize();
+
+  if (mode === "sun") {
+    const earth = sunCenteredFrameDirection.clone().multiplyScalar(-SUN_CENTER_EARTH_DISTANCE);
+    return {
+      earth,
+      sun: new THREE.Vector3(0, 0, 0),
+      moon: earth.clone().add(moonCenteredFrameDirection.clone().multiplyScalar(SUN_CENTER_MOON_DISTANCE)),
+      sunDirection: sunCenteredFrameDirection,
+      moonDirection: moonCenteredFrameDirection,
+      earthOrientation
+    };
+  }
+
+  if (mode === "moon") {
+    const earth = moonCenteredFrameDirection.clone().multiplyScalar(-MOON_CENTER_EARTH_DISTANCE);
+    return {
+      earth,
+      sun: earth.clone().add(sunCenteredFrameDirection.clone().multiplyScalar(MOON_CENTER_SUN_DISTANCE)),
+      moon: new THREE.Vector3(0, 0, 0),
+      sunDirection: sunCenteredFrameDirection,
+      moonDirection: moonCenteredFrameDirection,
+      earthOrientation
+    };
+  }
+
+  return {
+    earth: new THREE.Vector3(0, 0, 0),
+    sun: sunEarthDirection.clone().multiplyScalar(EARTH_CENTER_SUN_DISTANCE),
+    moon: moonEarthDirection.clone().multiplyScalar(EARTH_CENTER_MOON_DISTANCE),
+    sunDirection: sunEarthDirection,
+    moonDirection: moonEarthDirection,
+    earthOrientation: new THREE.Quaternion()
+  };
+}
+
+function earthOrientationQuaternion(date) {
+  const basis = equatorialBasisToEcliptic(date);
+  const matrix = new THREE.Matrix4().makeBasis(
+    threeVector(basis.greenwich).normalize(),
+    threeVector(basis.north).normalize(),
+    threeVector(basis.west90).multiplyScalar(-1).normalize()
+  );
+
+  return new THREE.Quaternion().setFromRotationMatrix(matrix);
+}
+
+function earthLocalToWorldDirectionForMode(localDirection, orientation, mode) {
+  const adjusted = localDirection.clone();
+  if (mode !== "earth") {
+    adjusted.multiply(new THREE.Vector3(1, 1, -1));
+  }
+
+  return adjusted.applyQuaternion(orientation).normalize();
+}
 
 function length(vector) {
   return Math.hypot(vector.x, vector.y, vector.z);
@@ -227,6 +363,47 @@ function renderSurfaceVector(date, observer) {
     y: rendered.y,
     z: rendered.z
   };
+}
+
+function earthTextureUv(observer) {
+  const latitude = observer.latitude * Math.PI / 180;
+  const longitude = observer.longitude * Math.PI / 180;
+  const cosLatitude = Math.cos(latitude);
+  const local = new THREE.Vector3(
+    cosLatitude * Math.cos(longitude),
+    Math.sin(latitude),
+    -cosLatitude * Math.sin(longitude)
+  ).normalize();
+  const textureLongitude = Math.atan2(-local.z, local.x);
+  const textureLatitude = Math.asin(Math.max(-1, Math.min(1, local.y)));
+
+  return {
+    u: (textureLongitude + Math.PI) / (Math.PI * 2),
+    v: 0.5 + textureLatitude / Math.PI
+  };
+}
+
+function renderedEarthTextureUv(date, observer) {
+  const local = earthLocalVector(observer);
+  const longitude = Math.atan2(-local.z, local.x);
+  const latitude = Math.asin(Math.max(-1, Math.min(1, local.y)));
+
+  return {
+    u: (longitude + Math.PI) / (Math.PI * 2),
+    v: 0.5 + latitude / Math.PI
+  };
+}
+
+function earthLocalVector(observer) {
+  const latitude = observer.latitude * Math.PI / 180;
+  const longitude = observer.longitude * Math.PI / 180;
+  const cosLatitude = Math.cos(latitude);
+
+  return new THREE.Vector3(
+    cosLatitude * Math.cos(longitude),
+    Math.sin(latitude),
+    -cosLatitude * Math.sin(longitude)
+  ).normalize();
 }
 
 function threeVector(vector) {

@@ -137,6 +137,41 @@ input {
   color: var(--accent);
 }
 
+.debug-overlay {
+  top: 24px;
+  right: 24px;
+  z-index: 4;
+  min-width: 260px;
+  max-width: 360px;
+  border: 1px solid color-mix(in srgb, var(--line) 70%, white);
+  border-radius: 10px;
+  background: rgba(7, 16, 20, 0.82);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+  padding: 10px 12px;
+  pointer-events: none;
+}
+
+.debug-title {
+  color: var(--accent);
+  font-size: 12px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.debug-overlay pre {
+  margin: 0;
+  color: #dce8ea;
+  font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  white-space: pre-wrap;
+}
+
+.debug-overlay pre + pre {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
 .dot {
   width: 10px;
   height: 10px;
@@ -242,6 +277,16 @@ input[type="number"] {
   margin-top: 7px;
 }
 
+select {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--text);
+  padding: 0 10px;
+}
+
 input[type="range"] {
   width: 100%;
   accent-color: var(--accent);
@@ -271,6 +316,10 @@ input[type="checkbox"] {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
+}
+
+.segmented.center-mode {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .segmented button[aria-pressed="true"] {
