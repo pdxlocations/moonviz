@@ -45,6 +45,26 @@ $env:PORT=8124; npm run serve
 
 Then open `http://localhost:8124/`.
 
+## Network Access
+
+To open MoonViz from another computer, tablet, or phone on the same network, run:
+
+```sh
+npm run serve:lan
+```
+
+The server prints one or more network URLs, for example:
+
+```text
+http://192.168.1.42:8123/
+```
+
+Open that URL from another device on the same Wi-Fi or LAN.
+
+Your operating system firewall may ask whether Node.js can accept incoming network connections. Allow it for private/trusted networks if you want other devices to connect.
+
+Use LAN mode only on networks you trust.
+
 ## macOS Launcher
 
 On macOS, `MoonViz.app` is an optional double-click launcher. It starts a local web server and opens MoonViz in the browser.

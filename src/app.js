@@ -348,18 +348,14 @@ function updateBodies() {
 
   const sunEarthDirection = geographicToEarthVector(subsolarPoint);
   const moonEarthDirection = geographicToEarthVector(sublunarPoint);
-  const sunWorldDirection = sunEarthDirection.clone().normalize();
-  const moonWorldDirection = moonEarthDirection.clone().normalize();
+  const sunWorldDirection = vectorToThree(sunPosition.vector).normalize();
+  const moonWorldDirection = vectorToThree(moonPosition.vector).normalize();
   const earthOrientation = earthOrientationQuaternion(state.date);
-  const sunCenteredFrameDirection = sunEarthDirection.clone()
-    .applyQuaternion(earthOrientation)
-    .normalize();
-  const moonCenteredFrameDirection = moonEarthDirection.clone()
-    .applyQuaternion(earthOrientation)
-    .normalize();
+  const sunCenteredFrameDirection = sunWorldDirection.clone();
+  const moonCenteredFrameDirection = moonWorldDirection.clone();
   const layout = sceneLayout({
-    sunEarthDirection: sunWorldDirection,
-    moonEarthDirection: moonWorldDirection,
+    sunEarthDirection,
+    moonEarthDirection,
     sunCenteredFrameDirection,
     moonCenteredFrameDirection,
     earthOrientation
@@ -383,8 +379,12 @@ function updateBodies() {
   moonLine.geometry.setFromPoints([layout.earth, layout.moon]);
 
   const observerDirection = geographicToEarthVector(state.observer);
-  const subsolarDirection = earthLocalToWorldDirection(sunEarthDirection);
-  const sublunarDirection = earthLocalToWorldDirection(moonEarthDirection);
+  const subsolarDirection = state.centerMode === "earth"
+    ? earthLocalToWorldDirection(sunEarthDirection)
+    : layout.sunDirection.clone();
+  const sublunarDirection = state.centerMode === "earth"
+    ? earthLocalToWorldDirection(moonEarthDirection)
+    : layout.moonDirection.clone();
   const observerWorldDirection = earthLocalToWorldDirection(observerDirection);
   const observerPosition = layout.earth.clone().add(observerWorldDirection.clone().multiplyScalar(0.68));
   observerMarker.position.copy(observerPosition);

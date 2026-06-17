@@ -34,6 +34,12 @@ assert.ok(
   dailySolarMotion > 0.9 && dailySolarMotion < 1.1,
   `expected inertial solar direction to move about 1 deg/day, got ${dailySolarMotion}`
 );
+const sunSixHoursLater = solarPosition(new Date("2026-06-17T06:00:00.000Z"));
+const sixHourSolarMotion = angleBetween(sunToday.vector, sunSixHoursLater.vector) * 180 / Math.PI;
+assert.ok(
+  sixHourSolarMotion > 0.2 && sixHourSolarMotion < 0.3,
+  `expected inertial solar direction to move about 0.25 deg/6h, got ${sixHourSolarMotion}`
+);
 
 const siderealStart = new Date("2026-06-17T00:00:00.000Z");
 const siderealEnd = new Date(siderealStart.getTime() + 86164090.5);
@@ -186,8 +192,12 @@ for (const mode of ["earth", "sun", "moon"]) {
   const subsolarLocal = earthLocalVector(sunSubpoint);
   const sublunarLocal = earthLocalVector(moonSubpoint);
   const observerWorld = earthLocalToWorldDirectionForMode(observerLocal, layout.earthOrientation, mode);
-  const subsolarWorld = earthLocalToWorldDirectionForMode(subsolarLocal, layout.earthOrientation, mode);
-  const sublunarWorld = earthLocalToWorldDirectionForMode(sublunarLocal, layout.earthOrientation, mode);
+  const subsolarWorld = mode === "earth"
+    ? earthLocalToWorldDirectionForMode(subsolarLocal, layout.earthOrientation, mode)
+    : layout.sunDirection.clone();
+  const sublunarWorld = mode === "earth"
+    ? earthLocalToWorldDirectionForMode(sublunarLocal, layout.earthOrientation, mode)
+    : layout.moonDirection.clone();
   const textureFrameObserver = textureFrameLocalDirectionForMode(observerLocal, mode);
   const textureUv = textureUvForMode(observerLocal, mode);
   const markerUv = textureUvFromFrameDirection(textureFrameObserver);
@@ -202,7 +212,9 @@ for (const mode of ["earth", "sun", "moon"]) {
     `expected ${mode} mode sublunar marker direction to align with Moon direction`
   );
 
-  const localLitDot = observerLocal.dot(subsolarLocal);
+  const localLitDot = mode === "earth"
+    ? observerLocal.dot(subsolarLocal)
+    : observerWorld.dot(layout.sunDirection);
   const worldLitDot = observerWorld.dot(layout.sunDirection);
   assert.ok(
     Math.abs(localLitDot - worldLitDot) < 1e-12,
@@ -229,6 +241,36 @@ for (const mode of ["earth", "sun", "moon"]) {
   );
 }
 
+const sunCenteredStart = centeredLayout(new Date("2026-06-17T00:00:00.000Z"), "sun");
+const sunCenteredSixHours = centeredLayout(new Date("2026-06-17T06:00:00.000Z"), "sun");
+const sunCenteredDaily = centeredLayout(new Date("2026-06-18T00:00:00.000Z"), "sun");
+const sunCenteredSixHourMotion = sunCenteredStart.earth.angleTo(sunCenteredSixHours.earth) * 180 / Math.PI;
+const sunCenteredDailyMotion = sunCenteredStart.earth.angleTo(sunCenteredDaily.earth) * 180 / Math.PI;
+assert.ok(
+  sunCenteredSixHourMotion > 0.2 && sunCenteredSixHourMotion < 0.3,
+  `expected Sun-centered Earth orbit to advance about 0.25 deg/6h, got ${sunCenteredSixHourMotion}`
+);
+assert.ok(
+  sunCenteredDailyMotion > 0.9 && sunCenteredDailyMotion < 1.1,
+  `expected Sun-centered Earth orbit to advance about 1 deg/day, got ${sunCenteredDailyMotion}`
+);
+
+const sunCenteredGreenwichStart = earthLocalToWorldDirectionForMode(
+  earthLocalVector({ latitude: 0, longitude: 0 }),
+  sunCenteredStart.earthOrientation,
+  "sun"
+);
+const sunCenteredGreenwichSixHours = earthLocalToWorldDirectionForMode(
+  earthLocalVector({ latitude: 0, longitude: 0 }),
+  sunCenteredSixHours.earthOrientation,
+  "sun"
+);
+const sunCenteredGreenwichSpin = sunCenteredGreenwichStart.angleTo(sunCenteredGreenwichSixHours) * 180 / Math.PI;
+assert.ok(
+  sunCenteredGreenwichSpin > 89 && sunCenteredGreenwichSpin < 91,
+  `expected Earth surface to keep rotating in Sun center view, got ${sunCenteredGreenwichSpin} deg in 6h`
+);
+
 console.log("astro tests passed");
 
 function centeredLayout(date, mode) {
@@ -243,13 +285,11 @@ function centeredLayout(date, mode) {
   const moonSubpoint = geographicSubpoint(date, lunarPosition(date).vector);
   const sunEarthDirection = earthLocalVector(sunSubpoint).normalize();
   const moonEarthDirection = earthLocalVector(moonSubpoint).normalize();
+  const sunWorldDirection = threeVector(solarPosition(date).vector).normalize();
+  const moonWorldDirection = threeVector(lunarPosition(date).vector).normalize();
   const earthOrientation = earthOrientationQuaternion(date);
-  const sunCenteredFrameDirection = sunEarthDirection.clone()
-    .applyQuaternion(earthOrientation)
-    .normalize();
-  const moonCenteredFrameDirection = moonEarthDirection.clone()
-    .applyQuaternion(earthOrientation)
-    .normalize();
+  const sunCenteredFrameDirection = sunWorldDirection.clone();
+  const moonCenteredFrameDirection = moonWorldDirection.clone();
 
   if (mode === "sun") {
     const earth = sunCenteredFrameDirection.clone().multiplyScalar(-SUN_CENTER_EARTH_DISTANCE);

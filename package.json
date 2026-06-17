@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "serve": "node scripts/serve.mjs",
+    "serve:lan": "node scripts/serve.mjs --lan",
     "test": "node tests/astro.test.mjs"
   },
   "dependencies": {
