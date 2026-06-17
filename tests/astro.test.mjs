@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import * as THREE from "three";
 import {
   equatorialBasisToEcliptic,
   geographicSubpoint,
+  greenwichSiderealTime,
   horizontalCoordinates,
   julianDate,
   lunarPosition,
@@ -24,6 +26,25 @@ assert.ok(fullPhase.illumination > 0.92, `expected near-full moon, got ${fullPha
 const sun = solarPosition(new Date("2026-06-21T00:00:00.000Z"));
 assert.ok(sun.distanceAu > 0.98 && sun.distanceAu < 1.02);
 assert.ok(sun.longitude > 88 && sun.longitude < 91, `expected near June solstice longitude, got ${sun.longitude}`);
+
+const sunToday = solarPosition(new Date("2026-06-17T00:00:00.000Z"));
+const sunTomorrow = solarPosition(new Date("2026-06-18T00:00:00.000Z"));
+const dailySolarMotion = angleBetween(sunToday.vector, sunTomorrow.vector) * 180 / Math.PI;
+assert.ok(
+  dailySolarMotion > 0.9 && dailySolarMotion < 1.1,
+  `expected inertial solar direction to move about 1 deg/day, got ${dailySolarMotion}`
+);
+
+const siderealStart = new Date("2026-06-17T00:00:00.000Z");
+const siderealEnd = new Date(siderealStart.getTime() + 86164090.5);
+const siderealDelta = angularDifferenceDegrees(
+  greenwichSiderealTime(siderealStart) * 180 / Math.PI,
+  greenwichSiderealTime(siderealEnd) * 180 / Math.PI
+);
+assert.ok(
+  siderealDelta < 0.01,
+  `expected Greenwich meridian to return after one sidereal day, got ${siderealDelta} deg`
+);
 
 const juneSolsticeGreenwichNoon = horizontalCoordinates(
   new Date("2026-06-21T12:00:00.000Z"),
@@ -111,6 +132,24 @@ assert.ok(angleBetween(greenwichZenith, basis.greenwich) < 1e-7);
 const west90Zenith = observerZenithVector(greenwichEquinoxNoon, { latitude: 0, longitude: -90 });
 assert.ok(angleBetween(west90Zenith, basis.west90) < 1e-7);
 
+const orientationStart = earthOrientationBasis(new Date("2026-06-17T00:00:00.000Z"));
+const orientationEnd = earthOrientationBasis(new Date("2026-06-17T06:00:00.000Z"));
+assert.ok(
+  angleBetween(orientationStart.north, orientationEnd.north) < 1e-12,
+  "expected Earth axis to stay fixed during sidereal spin"
+);
+assert.ok(
+  angleBetween(orientationStart.greenwich, orientationEnd.greenwich) > Math.PI / 2 - 0.02 &&
+    angleBetween(orientationStart.greenwich, orientationEnd.greenwich) < Math.PI / 2 + 0.02,
+  "expected Greenwich meridian to rotate around the fixed Earth axis over six hours"
+);
+
+const renderSurface = renderSurfaceVector(portlandNightDate, { latitude: 45.5152, longitude: -122.6784 });
+assert.ok(
+  Math.abs(dot(renderSurface, portlandSunDirection) - litSideDot) < 1e-12,
+  "expected rendered Sun-centered Earth orientation to preserve daylight/night side"
+);
+
 const frameRegressionDate = new Date("2026-06-17T05:30:00.000Z");
 for (const body of [solarPosition(frameRegressionDate), lunarPosition(frameRegressionDate)]) {
   const subpoint = geographicSubpoint(frameRegressionDate, body.vector);
@@ -135,6 +174,11 @@ function angleBetween(a, b) {
   return Math.acos(Math.min(1, Math.max(-1, dot(a, b) / (length(a) * length(b)))));
 }
 
+function angularDifferenceDegrees(a, b) {
+  const difference = Math.abs(((b - a + 180) % 360 + 360) % 360 - 180);
+  return difference;
+}
+
 function surfaceVector(date, observer) {
   const basis = equatorialBasisToEcliptic(date);
   const latitude = observer.latitude * Math.PI / 180;
@@ -150,4 +194,41 @@ function surfaceVector(date, observer) {
     y: basis.greenwich.y * local.x + basis.north.y * local.y + basis.west90.y * local.z,
     z: basis.greenwich.z * local.x + basis.north.z * local.y + basis.west90.z * local.z
   };
+}
+
+function earthOrientationBasis(date) {
+  const basis = equatorialBasisToEcliptic(date);
+  return {
+    greenwich: basis.greenwich,
+    north: basis.north
+  };
+}
+
+function renderSurfaceVector(date, observer) {
+  const basis = equatorialBasisToEcliptic(date);
+  const matrix = new THREE.Matrix4().makeBasis(
+    threeVector(basis.greenwich).normalize(),
+    threeVector(basis.north).normalize(),
+    threeVector(basis.west90).multiplyScalar(-1).normalize()
+  );
+  const orientation = new THREE.Quaternion().setFromRotationMatrix(matrix);
+  const latitude = observer.latitude * Math.PI / 180;
+  const longitude = observer.longitude * Math.PI / 180;
+  const cosLatitude = Math.cos(latitude);
+  const local = new THREE.Vector3(
+    cosLatitude * Math.cos(longitude),
+    Math.sin(latitude),
+    -cosLatitude * Math.sin(longitude)
+  );
+
+  const rendered = local.multiply(new THREE.Vector3(1, 1, -1)).applyQuaternion(orientation);
+  return {
+    x: rendered.x,
+    y: rendered.y,
+    z: rendered.z
+  };
+}
+
+function threeVector(vector) {
+  return new THREE.Vector3(vector.x, vector.y, vector.z);
 }

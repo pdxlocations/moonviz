@@ -19,12 +19,18 @@
           <span><i class="dot moon"></i>Moon</span>
           <span><i class="dot sun"></i>Sun direction</span>
         </div>
+        <div id="compass" class="compass" aria-label="Compass" hidden>
+          <span data-bearing="north">N</span>
+          <span data-bearing="east">E</span>
+          <span data-bearing="south">S</span>
+          <span data-bearing="west">W</span>
+        </div>
       </section>
 
       <aside class="panel" aria-label="Date and display controls">
         <div class="section">
           <h1>Solar and lunar position</h1>
-          <p class="lede">Set any date and observer position to see where the sun and moon sit in Earth-centered space.</p>
+          <p class="lede">Set any date and observer position to see where the sun and moon sit in space.</p>
         </div>
 
         <div class="section controls">
@@ -53,6 +59,10 @@
           <div class="segmented" role="group" aria-label="View mode">
             <button id="spaceViewButton" type="button" aria-pressed="true">Space</button>
             <button id="povViewButton" type="button" aria-pressed="false">POV</button>
+          </div>
+          <div class="segmented" role="group" aria-label="Center mode">
+            <button id="earthCenterButton" type="button" aria-pressed="true">Earth center</button>
+            <button id="sunCenterButton" type="button" aria-pressed="false">Sun center</button>
           </div>
           <div id="povFovControl" class="range-control" hidden>
             <label for="povFov">

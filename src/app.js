@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import {
+  equatorialBasisToEcliptic,
   formatDegrees,
   formatSignedDegrees,
   geographicSubpoint,
@@ -23,6 +24,8 @@ const ui = {
   resetViewButton: document.querySelector("#resetViewButton"),
   spaceViewButton: document.querySelector("#spaceViewButton"),
   povViewButton: document.querySelector("#povViewButton"),
+  earthCenterButton: document.querySelector("#earthCenterButton"),
+  sunCenterButton: document.querySelector("#sunCenterButton"),
   povFovControl: document.querySelector("#povFovControl"),
   povFov: document.querySelector("#povFov"),
   povFovValue: document.querySelector("#povFovValue"),
@@ -50,7 +53,9 @@ const ui = {
   moonVisibility: document.querySelector("#moonVisibility"),
   moonHorizontal: document.querySelector("#moonHorizontal"),
   sunVisibility: document.querySelector("#sunVisibility"),
-  sunHorizontal: document.querySelector("#sunHorizontal")
+  sunHorizontal: document.querySelector("#sunHorizontal"),
+  compass: document.querySelector("#compass"),
+  compassPoints: document.querySelectorAll("#compass [data-bearing]")
 };
 
 const DEFAULT_OBSERVER = {
@@ -69,7 +74,12 @@ const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
 camera.position.set(-4.4, 2.6, 5.4);
 const SPACE_FOV = 45;
 const MAX_POV_FOV = 120;
+const EARTH_CENTER_SUN_DISTANCE = 6.8;
+const EARTH_CENTER_MOON_DISTANCE = 2.15;
+const SUN_CENTER_EARTH_DISTANCE = 3.9;
+const SUN_CENTER_MOON_DISTANCE = 1.35;
 const spaceCameraPosition = new THREE.Vector3(-4.4, 2.6, 5.4);
+const sunCenterCameraPosition = new THREE.Vector3(-5.6, 3.2, 6.4);
 const spaceCameraTarget = new THREE.Vector3(0, 0, 0);
 
 const controls = new OrbitControls(camera, canvas);
@@ -81,7 +91,7 @@ controls.target.set(0, 0, 0);
 
 const ambient = new THREE.AmbientLight(0x8aa0a4, 0.22);
 const sunlight = new THREE.DirectionalLight(0xfff3ce, 2.4);
-scene.add(ambient, sunlight);
+scene.add(ambient, sunlight, sunlight.target);
 
 const textureLoader = new THREE.TextureLoader();
 const earthTexture = textureLoader.load("./assets/earth-blue-marble.jpg");
@@ -98,13 +108,14 @@ const earth = new THREE.Mesh(
       sunDirection: { value: new THREE.Vector3(1, 0, 0) },
       nightStrength: { value: 0.78 }
     },
+    side: THREE.DoubleSide,
     vertexShader: `
-      varying vec2 vUv;
+      varying vec3 vLocalDirection;
       varying vec3 vWorldNormal;
 
       void main() {
-        vUv = uv;
-        vWorldNormal = normalize(mat3(modelMatrix) * normal);
+        vLocalDirection = normalize(position);
+        vWorldNormal = normalize((modelMatrix * vec4(vLocalDirection, 0.0)).xyz);
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
       }
     `,
@@ -112,11 +123,14 @@ const earth = new THREE.Mesh(
       uniform sampler2D earthMap;
       uniform vec3 sunDirection;
       uniform float nightStrength;
-      varying vec2 vUv;
+      varying vec3 vLocalDirection;
       varying vec3 vWorldNormal;
 
       void main() {
-        vec3 color = texture2D(earthMap, vUv).rgb;
+        float longitude = atan(-vLocalDirection.z, vLocalDirection.x);
+        float latitude = asin(clamp(vLocalDirection.y, -1.0, 1.0));
+        vec2 mapUv = vec2((longitude + 3.141592653589793) / 6.283185307179586, 0.5 - latitude / 3.141592653589793);
+        vec3 color = texture2D(earthMap, mapUv).rgb;
         float daylight = dot(normalize(vWorldNormal), normalize(sunDirection));
         float terminator = smoothstep(-0.04, 0.08, daylight);
         vec3 nightColor = color * mix(vec3(0.25, 0.32, 0.45), vec3(0.012, 0.02, 0.035), nightStrength);
@@ -178,6 +192,7 @@ const state = {
   observer: loadObserver(),
   playing: false,
   viewMode: "space",
+  centerMode: "earth",
   lastFrame: performance.now()
 };
 
@@ -212,9 +227,7 @@ function bindEvents() {
 
   ui.resetViewButton.addEventListener("click", () => {
     setViewMode("space");
-    camera.position.copy(spaceCameraPosition);
-    controls.target.copy(spaceCameraTarget);
-    controls.update();
+    resetSpaceCamera();
   });
 
   ui.spaceViewButton.addEventListener("click", () => {
@@ -223,6 +236,14 @@ function bindEvents() {
 
   ui.povViewButton.addEventListener("click", () => {
     setViewMode("pov");
+  });
+
+  ui.earthCenterButton.addEventListener("click", () => {
+    setCenterMode("earth");
+  });
+
+  ui.sunCenterButton.addEventListener("click", () => {
+    setCenterMode("sun");
   });
 
   ui.povFov.addEventListener("input", () => {
@@ -280,6 +301,7 @@ function frame(now) {
   updateReadout();
   updateCameraView();
   controls.update();
+  updateCompass();
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
 }
@@ -294,23 +316,38 @@ function updateBodies() {
   const moonEarthDirection = geographicToEarthVector(sublunarPoint);
   const sunWorldDirection = sunEarthDirection.clone().normalize();
   const moonWorldDirection = moonEarthDirection.clone().normalize();
-  const sunScenePosition = sunWorldDirection.clone().multiplyScalar(6.8);
-  const moonScenePosition = moonWorldDirection.clone().multiplyScalar(2.15);
+  const sunEclipticDirection = vectorToThree(sunPosition.vector).normalize();
+  const moonEclipticDirection = vectorToThree(moonPosition.vector).normalize();
+  const layout = sceneLayout({
+    sunEarthDirection: sunWorldDirection,
+    moonEarthDirection: moonWorldDirection,
+    sunEclipticDirection,
+    moonEclipticDirection,
+    earthOrientation: earthOrientationQuaternion(state.date)
+  });
 
-  sun.position.copy(sunScenePosition);
-  moon.position.copy(moonScenePosition);
-  sunlight.position.copy(sunScenePosition);
-  earth.material.uniforms.sunDirection.value.copy(sunWorldDirection);
-  sunLine.geometry.setFromPoints([new THREE.Vector3(0, 0, 0), sunScenePosition]);
-  moonLine.geometry.setFromPoints([new THREE.Vector3(0, 0, 0), moonScenePosition]);
+  earth.position.copy(layout.earth);
+  earth.quaternion.copy(layout.earthOrientation);
+  earth.scale.set(1, 1, layout.earthScaleZ);
+  sun.position.copy(layout.sun);
+  moon.position.copy(layout.moon);
+  moonOrbit.position.copy(layout.earth);
+  moonOrbit.scale.setScalar(layout.moonOrbitScale);
+  eclipticRing.position.copy(layout.eclipticCenter);
+  eclipticRing.scale.setScalar(layout.eclipticScale);
+  sunlight.position.copy(layout.sun);
+  sunlight.target.position.copy(layout.earth);
+  earth.material.uniforms.sunDirection.value.copy(layout.sunDirection);
+  sunLine.geometry.setFromPoints([layout.earth, layout.sun]);
+  moonLine.geometry.setFromPoints([layout.earth, layout.moon]);
 
   const observerDirection = geographicToEarthVector(state.observer);
   const markerPosition = observerDirection.clone().multiplyScalar(0.68);
-  const observerWorldDirection = observerDirection.clone().normalize();
+  const observerWorldDirection = earthLocalToWorldDirection(observerDirection);
   observerMarker.position.copy(markerPosition);
-  subsolarMarker.position.copy(sunEarthDirection.clone().multiplyScalar(0.69));
-  sublunarMarker.position.copy(moonEarthDirection.clone().multiplyScalar(0.69));
-  observerMarker.material.color.set(surfaceDot(observerWorldDirection, sunWorldDirection) > 0 ? 0xfff1a8 : 0x79a8ff);
+  setSurfaceMarkerPosition(subsolarMarker, sunEarthDirection, layout.sunDirection, 0.69);
+  setSurfaceMarkerPosition(sublunarMarker, moonEarthDirection, layout.moonDirection, 0.69);
+  observerMarker.material.color.set(surfaceDot(observerWorldDirection, layout.sunDirection) > 0 ? 0xfff1a8 : 0x79a8ff);
   zenithLine.geometry.setFromPoints([
     markerPosition,
     observerDirection.clone().multiplyScalar(1.18)
@@ -375,7 +412,10 @@ function syncPlayButton() {
 function syncViewControls() {
   ui.spaceViewButton.setAttribute("aria-pressed", String(state.viewMode === "space"));
   ui.povViewButton.setAttribute("aria-pressed", String(state.viewMode === "pov"));
+  ui.earthCenterButton.setAttribute("aria-pressed", String(state.centerMode === "earth"));
+  ui.sunCenterButton.setAttribute("aria-pressed", String(state.centerMode === "sun"));
   ui.povFovControl.hidden = state.viewMode !== "pov";
+  ui.compass.hidden = state.viewMode !== "pov";
   controls.enabled = state.viewMode === "space";
 }
 
@@ -383,15 +423,33 @@ function setViewMode(mode) {
   if (state.viewMode === mode) return;
 
   state.viewMode = mode;
+  if (mode === "pov") {
+    state.centerMode = "earth";
+  }
   syncViewControls();
   syncCameraFov();
   updateGraphicsControls();
 
   if (mode === "space") {
-    camera.position.copy(spaceCameraPosition);
-    controls.target.copy(spaceCameraTarget);
-    controls.update();
+    resetSpaceCamera();
   }
+}
+
+function setCenterMode(mode) {
+  if (state.centerMode === mode) return;
+
+  state.centerMode = mode;
+  syncViewControls();
+
+  if (state.viewMode === "space") {
+    resetSpaceCamera();
+  }
+}
+
+function resetSpaceCamera() {
+  camera.position.copy(state.centerMode === "sun" ? sunCenterCameraPosition : spaceCameraPosition);
+  controls.target.copy(spaceCameraTarget);
+  controls.update();
 }
 
 function syncPovFovLabel() {
@@ -408,6 +466,82 @@ function syncCameraFov() {
 
   camera.fov = targetFov;
   camera.updateProjectionMatrix();
+}
+
+function sceneLayout(directions) {
+  const useSunCenter = isSunCenteredSpaceView();
+
+  if (useSunCenter) {
+    const earthPosition = directions.sunEclipticDirection.clone().multiplyScalar(-SUN_CENTER_EARTH_DISTANCE);
+    return {
+      earth: earthPosition,
+      earthOrientation: directions.earthOrientation,
+      earthScaleZ: -1,
+      sun: new THREE.Vector3(0, 0, 0),
+      moon: earthPosition.clone().add(directions.moonEclipticDirection.clone().multiplyScalar(SUN_CENTER_MOON_DISTANCE)),
+      sunDirection: directions.sunEclipticDirection,
+      moonDirection: directions.moonEclipticDirection,
+      moonOrbitScale: SUN_CENTER_MOON_DISTANCE / EARTH_CENTER_MOON_DISTANCE,
+      eclipticCenter: new THREE.Vector3(0, 0, 0),
+      eclipticScale: SUN_CENTER_EARTH_DISTANCE / 3.9
+    };
+  }
+
+  return {
+    earth: new THREE.Vector3(0, 0, 0),
+    earthOrientation: new THREE.Quaternion(),
+    earthScaleZ: 1,
+    sun: directions.sunEarthDirection.clone().multiplyScalar(EARTH_CENTER_SUN_DISTANCE),
+    moon: directions.moonEarthDirection.clone().multiplyScalar(EARTH_CENTER_MOON_DISTANCE),
+    sunDirection: directions.sunEarthDirection,
+    moonDirection: directions.moonEarthDirection,
+    moonOrbitScale: 1,
+    eclipticCenter: new THREE.Vector3(0, 0, 0),
+    eclipticScale: 1
+  };
+}
+
+function isSunCenteredSpaceView() {
+  return state.centerMode === "sun" && state.viewMode === "space";
+}
+
+function earthOrientationQuaternion(date) {
+  const basis = equatorialBasisToEcliptic(date);
+  const matrix = new THREE.Matrix4().makeBasis(
+    vectorToThree(basis.greenwich).normalize(),
+    vectorToThree(basis.north).normalize(),
+    vectorToThree(basis.west90).multiplyScalar(-1).normalize()
+  );
+
+  return new THREE.Quaternion().setFromRotationMatrix(matrix);
+}
+
+function setSurfaceMarkerPosition(marker, earthFixedDirection, worldDirection, radius) {
+  if (isSunCenteredSpaceView()) {
+    marker.position.copy(worldToEarthLocalDirection(worldDirection).multiplyScalar(radius));
+    return;
+  }
+
+  marker.position.copy(earthFixedDirection.clone().multiplyScalar(radius));
+}
+
+function earthLocalToWorldDirection(localDirection) {
+  return localDirection.clone()
+    .multiply(new THREE.Vector3(earth.scale.x, earth.scale.y, earth.scale.z))
+    .applyQuaternion(earth.quaternion)
+    .normalize();
+}
+
+function worldToEarthLocalDirection(worldDirection) {
+  const local = worldDirection.clone()
+    .applyQuaternion(earth.quaternion.clone().invert())
+    .normalize();
+
+  return new THREE.Vector3(
+    local.x / earth.scale.x,
+    local.y / earth.scale.y,
+    local.z / earth.scale.z
+  ).normalize();
 }
 
 function setObserverInputs(observer) {
@@ -474,7 +608,7 @@ function updateCameraView() {
 
   const observerDirection = geographicToEarthVector(state.observer);
   const observerWorldDirection = observerDirection.clone().normalize();
-  const surface = observerWorldDirection.clone().multiplyScalar(0.72);
+  const surface = earth.position.clone().add(observerWorldDirection.clone().multiplyScalar(0.72));
   const north = geographicNorthVector(state.observer).normalize();
   const west = geographicWestVector(state.observer).normalize();
 
@@ -483,6 +617,29 @@ function updateCameraView() {
     .add(north.multiplyScalar(0.18))
     .add(west.multiplyScalar(0.12));
   controls.target.copy(surface.clone().add(observerWorldDirection.clone().multiplyScalar(1.3)));
+}
+
+function updateCompass() {
+  if (state.viewMode !== "pov") return;
+
+  const north = geographicNorthVector(state.observer).normalize();
+  const west = geographicWestVector(state.observer).normalize();
+  const bearings = {
+    north,
+    east: west.clone().multiplyScalar(-1),
+    south: north.clone().multiplyScalar(-1),
+    west
+  };
+  const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0).normalize();
+  const up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1).normalize();
+  const radius = 38;
+
+  for (const point of ui.compassPoints) {
+    const direction = bearings[point.dataset.bearing];
+    const x = direction.dot(right);
+    const y = direction.dot(up);
+    point.style.transform = `translate(${x * radius}px, ${-y * radius}px) translate(-50%, -50%)`;
+  }
 }
 
 function updateGraphicsControls() {
@@ -547,6 +704,10 @@ function geographicWestVector(observer) {
     0,
     Math.cos(longitude)
   ).normalize();
+}
+
+function vectorToThree(vector) {
+  return new THREE.Vector3(vector.x, vector.y, vector.z);
 }
 
 function surfaceDot(surfaceDirection, bodyDirection) {
