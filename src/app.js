@@ -27,7 +27,6 @@ const ui = {
   povFov: document.querySelector("#povFov"),
   povFovValue: document.querySelector("#povFovValue"),
   contrast: document.querySelector("#contrast"),
-  showClouds: document.querySelector("#showClouds"),
   showOrbits: document.querySelector("#showOrbits"),
   showLines: document.querySelector("#showLines"),
   showStars: document.querySelector("#showStars"),
@@ -88,6 +87,8 @@ const textureLoader = new THREE.TextureLoader();
 const earthTexture = textureLoader.load("./assets/earth-blue-marble.jpg");
 earthTexture.colorSpace = THREE.SRGBColorSpace;
 earthTexture.anisotropy = Math.min(renderer.capabilities.getMaxAnisotropy(), 8);
+const moonTexture = createMoonTexture(512);
+const sunTexture = createSunTexture(512);
 
 const earth = new THREE.Mesh(
   new THREE.SphereGeometry(0.62, 64, 32),
@@ -127,41 +128,11 @@ const earth = new THREE.Mesh(
 );
 scene.add(earth);
 
-const earthClouds = new THREE.Mesh(
-  new THREE.SphereGeometry(0.635, 48, 24),
-  new THREE.ShaderMaterial({
-    uniforms: {
-      sunDirection: { value: new THREE.Vector3(1, 0, 0) }
-    },
-    transparent: true,
-    wireframe: true,
-    depthWrite: false,
-    vertexShader: `
-      varying vec3 vWorldNormal;
-
-      void main() {
-        vWorldNormal = normalize(mat3(modelMatrix) * normal);
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      }
-    `,
-    fragmentShader: `
-      uniform vec3 sunDirection;
-      varying vec3 vWorldNormal;
-
-      void main() {
-        float daylight = dot(normalize(vWorldNormal), normalize(sunDirection));
-        float alpha = 0.085 * smoothstep(-0.02, 0.12, daylight);
-        gl_FragColor = vec4(vec3(1.0), alpha);
-      }
-    `
-  })
-);
-scene.add(earthClouds);
-
 const moon = new THREE.Mesh(
   new THREE.SphereGeometry(0.18, 48, 24),
   new THREE.MeshStandardMaterial({
-    color: 0xd8dde0,
+    map: moonTexture,
+    color: 0xf0f1ed,
     roughness: 0.95
   })
 );
@@ -169,7 +140,10 @@ scene.add(moon);
 
 const sun = new THREE.Mesh(
   new THREE.SphereGeometry(0.16, 48, 24),
-  new THREE.MeshBasicMaterial({ color: 0xffb84d })
+  new THREE.MeshBasicMaterial({
+    map: sunTexture,
+    color: 0xffc86a
+  })
 );
 scene.add(sun);
 
@@ -327,7 +301,6 @@ function updateBodies() {
   moon.position.copy(moonScenePosition);
   sunlight.position.copy(sunScenePosition);
   earth.material.uniforms.sunDirection.value.copy(sunWorldDirection);
-  earthClouds.material.uniforms.sunDirection.value.copy(sunWorldDirection);
   sunLine.geometry.setFromPoints([new THREE.Vector3(0, 0, 0), sunScenePosition]);
   moonLine.geometry.setFromPoints([new THREE.Vector3(0, 0, 0), moonScenePosition]);
 
@@ -518,7 +491,6 @@ function updateGraphicsControls() {
   const pov = state.viewMode === "pov";
 
   earth.visible = !pov;
-  earthClouds.visible = !pov && ui.showClouds.checked;
   moonOrbit.visible = ui.showOrbits.checked;
   eclipticRing.visible = ui.showOrbits.checked;
   sunLine.visible = ui.showLines.checked;
@@ -534,7 +506,6 @@ function updateGraphicsControls() {
 
 function graphicsCheckboxes() {
   return [
-    ui.showClouds,
     ui.showOrbits,
     ui.showLines,
     ui.showStars,
@@ -619,11 +590,126 @@ function createStars(count) {
   return new THREE.Points(
     geometry,
     new THREE.PointsMaterial({
-      color: 0xbfd2d8,
-      size: 0.045,
+      color: 0xe7f4f6,
+      size: 2,
+      sizeAttenuation: false,
       transparent: true,
-      opacity: 0.78,
+      opacity: 0.9,
+      fog: false,
+      depthTest: true,
       depthWrite: false
     })
   );
+}
+
+function createMoonTexture(size) {
+  const canvasTexture = createCanvasTexture(size);
+  const { canvas, context } = canvasTexture;
+  const base = context.createRadialGradient(
+    size * 0.34, size * 0.28, size * 0.08,
+    size * 0.48, size * 0.5, size * 0.72
+  );
+
+  base.addColorStop(0, "#f2f0e8");
+  base.addColorStop(0.62, "#aaa99f");
+  base.addColorStop(1, "#5c5f5d");
+  context.fillStyle = base;
+  context.fillRect(0, 0, size, size);
+
+  drawTextureNoise(context, size, 0.18);
+  drawMoonCraters(context, size, 130);
+
+  return finishTexture(canvas);
+}
+
+function createSunTexture(size) {
+  const canvasTexture = createCanvasTexture(size);
+  const { canvas, context } = canvasTexture;
+  const base = context.createRadialGradient(
+    size * 0.38, size * 0.34, size * 0.05,
+    size * 0.5, size * 0.5, size * 0.7
+  );
+
+  base.addColorStop(0, "#fff4aa");
+  base.addColorStop(0.38, "#ffc44d");
+  base.addColorStop(0.72, "#ef762f");
+  base.addColorStop(1, "#7f230e");
+  context.fillStyle = base;
+  context.fillRect(0, 0, size, size);
+
+  drawSunBands(context, size);
+  drawTextureNoise(context, size, 0.12);
+
+  return finishTexture(canvas);
+}
+
+function createCanvasTexture(size) {
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+
+  return {
+    canvas,
+    context: canvas.getContext("2d")
+  };
+}
+
+function finishTexture(canvas) {
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.anisotropy = Math.min(renderer.capabilities.getMaxAnisotropy(), 8);
+  return texture;
+}
+
+function drawTextureNoise(context, size, strength) {
+  const image = context.getImageData(0, 0, size, size);
+  const data = image.data;
+
+  for (let i = 0; i < data.length; i += 4) {
+    const noise = (Math.random() - 0.5) * 255 * strength;
+    data[i] = Math.max(0, Math.min(255, data[i] + noise));
+    data[i + 1] = Math.max(0, Math.min(255, data[i + 1] + noise));
+    data[i + 2] = Math.max(0, Math.min(255, data[i + 2] + noise));
+  }
+
+  context.putImageData(image, 0, 0);
+}
+
+function drawMoonCraters(context, size, count) {
+  for (let i = 0; i < count; i++) {
+    const x = Math.random() * size;
+    const y = Math.random() * size;
+    const radius = (0.006 + Math.random() * Math.random() * 0.04) * size;
+    const alpha = 0.08 + Math.random() * 0.18;
+
+    context.beginPath();
+    context.arc(x, y, radius, 0, Math.PI * 2);
+    context.fillStyle = `rgba(50, 52, 50, ${alpha})`;
+    context.fill();
+    context.beginPath();
+    context.arc(x - radius * 0.16, y - radius * 0.16, radius * 0.7, 0, Math.PI * 2);
+    context.strokeStyle = `rgba(255, 255, 240, ${alpha * 0.55})`;
+    context.lineWidth = Math.max(1, radius * 0.12);
+    context.stroke();
+  }
+}
+
+function drawSunBands(context, size) {
+  context.globalCompositeOperation = "screen";
+
+  for (let y = -size * 0.1; y < size * 1.1; y += size * 0.075) {
+    context.beginPath();
+    context.moveTo(0, y);
+    for (let x = 0; x <= size; x += size * 0.08) {
+      const wave = Math.sin((x / size) * Math.PI * 4 + y * 0.02) * size * 0.018;
+      context.lineTo(x, y + wave);
+    }
+    context.strokeStyle = "rgba(255, 232, 120, 0.18)";
+    context.lineWidth = size * 0.022;
+    context.stroke();
+  }
+
+  context.globalCompositeOperation = "source-over";
 }
