@@ -1,0 +1,629 @@
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import {
+  formatDegrees,
+  formatSignedDegrees,
+  geographicSubpoint,
+  horizontalCoordinates,
+  lunarPosition,
+  moonPhase,
+  solarPosition
+} from "./astro.js";
+
+const canvas = document.querySelector("#space");
+const ui = {
+  dateTime: document.querySelector("#dateTime"),
+  nowButton: document.querySelector("#nowButton"),
+  minusDayButton: document.querySelector("#minusDayButton"),
+  plusDayButton: document.querySelector("#plusDayButton"),
+  minusHourButton: document.querySelector("#minusHourButton"),
+  plusHourButton: document.querySelector("#plusHourButton"),
+  speed: document.querySelector("#speed"),
+  playButton: document.querySelector("#playButton"),
+  resetViewButton: document.querySelector("#resetViewButton"),
+  spaceViewButton: document.querySelector("#spaceViewButton"),
+  povViewButton: document.querySelector("#povViewButton"),
+  povFovControl: document.querySelector("#povFovControl"),
+  povFov: document.querySelector("#povFov"),
+  povFovValue: document.querySelector("#povFovValue"),
+  contrast: document.querySelector("#contrast"),
+  showClouds: document.querySelector("#showClouds"),
+  showOrbits: document.querySelector("#showOrbits"),
+  showLines: document.querySelector("#showLines"),
+  showStars: document.querySelector("#showStars"),
+  showSun: document.querySelector("#showSun"),
+  showMoon: document.querySelector("#showMoon"),
+  showObserver: document.querySelector("#showObserver"),
+  showSubpoints: document.querySelector("#showSubpoints"),
+  latitude: document.querySelector("#latitude"),
+  longitude: document.querySelector("#longitude"),
+  useLocationButton: document.querySelector("#useLocationButton"),
+  locationStatus: document.querySelector("#locationStatus"),
+  utcLabel: document.querySelector("#utcLabel"),
+  phaseLabel: document.querySelector("#phaseLabel"),
+  moonDistance: document.querySelector("#moonDistance"),
+  sunDistance: document.querySelector("#sunDistance"),
+  moonLongitude: document.querySelector("#moonLongitude"),
+  sunLongitude: document.querySelector("#sunLongitude"),
+  observerPosition: document.querySelector("#observerPosition"),
+  subsolarPoint: document.querySelector("#subsolarPoint"),
+  sublunarPoint: document.querySelector("#sublunarPoint"),
+  moonVisibility: document.querySelector("#moonVisibility"),
+  moonHorizontal: document.querySelector("#moonHorizontal"),
+  sunVisibility: document.querySelector("#sunVisibility"),
+  sunHorizontal: document.querySelector("#sunHorizontal")
+};
+
+const DEFAULT_OBSERVER = {
+  latitude: 45.5152,
+  longitude: -122.6784
+};
+
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.setClearColor(0x061014, 1);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x061014, 12, 34);
+
+const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+camera.position.set(-4.4, 2.6, 5.4);
+const SPACE_FOV = 45;
+const MAX_POV_FOV = 120;
+const spaceCameraPosition = new THREE.Vector3(-4.4, 2.6, 5.4);
+const spaceCameraTarget = new THREE.Vector3(0, 0, 0);
+
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+controls.minDistance = 3.2;
+controls.maxDistance = 13;
+controls.target.set(0, 0, 0);
+
+const ambient = new THREE.AmbientLight(0x8aa0a4, 0.22);
+const sunlight = new THREE.DirectionalLight(0xfff3ce, 2.4);
+scene.add(ambient, sunlight);
+
+const textureLoader = new THREE.TextureLoader();
+const earthTexture = textureLoader.load("./assets/earth-blue-marble.jpg");
+earthTexture.colorSpace = THREE.SRGBColorSpace;
+earthTexture.anisotropy = Math.min(renderer.capabilities.getMaxAnisotropy(), 8);
+
+const earth = new THREE.Mesh(
+  new THREE.SphereGeometry(0.62, 64, 32),
+  new THREE.ShaderMaterial({
+    uniforms: {
+      earthMap: { value: earthTexture },
+      sunDirection: { value: new THREE.Vector3(1, 0, 0) },
+      nightStrength: { value: 0.78 }
+    },
+    vertexShader: `
+      varying vec2 vUv;
+      varying vec3 vWorldNormal;
+
+      void main() {
+        vUv = uv;
+        vWorldNormal = normalize(mat3(modelMatrix) * normal);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform sampler2D earthMap;
+      uniform vec3 sunDirection;
+      uniform float nightStrength;
+      varying vec2 vUv;
+      varying vec3 vWorldNormal;
+
+      void main() {
+        vec3 color = texture2D(earthMap, vUv).rgb;
+        float daylight = dot(normalize(vWorldNormal), normalize(sunDirection));
+        float terminator = smoothstep(-0.04, 0.08, daylight);
+        vec3 nightColor = color * mix(vec3(0.25, 0.32, 0.45), vec3(0.012, 0.02, 0.035), nightStrength);
+        vec3 dayColor = color * (0.38 + max(daylight, 0.0) * 0.82);
+        gl_FragColor = vec4(mix(nightColor, dayColor, terminator), 1.0);
+      }
+    `
+  })
+);
+scene.add(earth);
+
+const earthClouds = new THREE.Mesh(
+  new THREE.SphereGeometry(0.635, 48, 24),
+  new THREE.ShaderMaterial({
+    uniforms: {
+      sunDirection: { value: new THREE.Vector3(1, 0, 0) }
+    },
+    transparent: true,
+    wireframe: true,
+    depthWrite: false,
+    vertexShader: `
+      varying vec3 vWorldNormal;
+
+      void main() {
+        vWorldNormal = normalize(mat3(modelMatrix) * normal);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform vec3 sunDirection;
+      varying vec3 vWorldNormal;
+
+      void main() {
+        float daylight = dot(normalize(vWorldNormal), normalize(sunDirection));
+        float alpha = 0.085 * smoothstep(-0.02, 0.12, daylight);
+        gl_FragColor = vec4(vec3(1.0), alpha);
+      }
+    `
+  })
+);
+scene.add(earthClouds);
+
+const moon = new THREE.Mesh(
+  new THREE.SphereGeometry(0.18, 48, 24),
+  new THREE.MeshStandardMaterial({
+    color: 0xd8dde0,
+    roughness: 0.95
+  })
+);
+scene.add(moon);
+
+const sun = new THREE.Mesh(
+  new THREE.SphereGeometry(0.16, 48, 24),
+  new THREE.MeshBasicMaterial({ color: 0xffb84d })
+);
+scene.add(sun);
+
+const moonOrbit = createOrbitRing(2.15, 0xb8c5c9, 0.28);
+const eclipticRing = createOrbitRing(3.9, 0xf4bd58, 0.18);
+scene.add(moonOrbit, eclipticRing);
+
+const sunLine = createRadialLine(0xf6c563, 0.55);
+const moonLine = createRadialLine(0xd7dee2, 0.42);
+scene.add(sunLine, moonLine);
+
+const observerMarker = new THREE.Mesh(
+  new THREE.SphereGeometry(0.035, 18, 12),
+  new THREE.MeshBasicMaterial({ color: 0xfff1a8 })
+);
+const subsolarMarker = new THREE.Mesh(
+  new THREE.SphereGeometry(0.04, 18, 12),
+  new THREE.MeshBasicMaterial({ color: 0xffb84d })
+);
+const sublunarMarker = new THREE.Mesh(
+  new THREE.SphereGeometry(0.024, 18, 12),
+  new THREE.MeshBasicMaterial({ color: 0xd7dee2 })
+);
+const zenithLine = createRadialLine(0xfff1a8, 0.72);
+earth.add(observerMarker, subsolarMarker, sublunarMarker, zenithLine);
+
+const stars = createStars(720);
+scene.add(stars);
+
+const state = {
+  date: new Date(),
+  observer: loadObserver(),
+  playing: false,
+  viewMode: "space",
+  lastFrame: performance.now()
+};
+
+setDateInput(state.date);
+setObserverInputs(state.observer);
+syncPlayButton();
+syncViewControls();
+updateGraphicsControls();
+bindEvents();
+requestAnimationFrame(frame);
+
+function bindEvents() {
+  ui.dateTime.addEventListener("change", () => {
+    const next = new Date(ui.dateTime.value);
+    if (!Number.isNaN(next.getTime())) state.date = next;
+  });
+
+  ui.nowButton.addEventListener("click", () => {
+    state.date = new Date();
+    setDateInput(state.date);
+  });
+
+  ui.minusDayButton.addEventListener("click", () => shiftDays(-1));
+  ui.plusDayButton.addEventListener("click", () => shiftDays(1));
+  ui.minusHourButton.addEventListener("click", () => shiftHours(-1));
+  ui.plusHourButton.addEventListener("click", () => shiftHours(1));
+
+  ui.playButton.addEventListener("click", () => {
+    state.playing = !state.playing;
+    syncPlayButton();
+  });
+
+  ui.resetViewButton.addEventListener("click", () => {
+    setViewMode("space");
+    camera.position.copy(spaceCameraPosition);
+    controls.target.copy(spaceCameraTarget);
+    controls.update();
+  });
+
+  ui.spaceViewButton.addEventListener("click", () => {
+    setViewMode("space");
+  });
+
+  ui.povViewButton.addEventListener("click", () => {
+    setViewMode("pov");
+  });
+
+  ui.povFov.addEventListener("input", () => {
+    syncPovFovLabel();
+    syncCameraFov();
+  });
+
+  ui.contrast.addEventListener("input", updateGraphicsControls);
+
+  for (const checkbox of graphicsCheckboxes()) {
+    checkbox.addEventListener("change", updateGraphicsControls);
+  }
+
+  ui.latitude.addEventListener("change", readObserverInputs);
+  ui.longitude.addEventListener("change", readObserverInputs);
+
+  ui.useLocationButton.addEventListener("click", () => {
+    if (!navigator.geolocation) {
+      ui.locationStatus.textContent = "Geolocation is not available in this browser.";
+      return;
+    }
+
+    ui.locationStatus.textContent = "Requesting location...";
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        state.observer = {
+          latitude: roundCoordinate(position.coords.latitude),
+          longitude: roundCoordinate(position.coords.longitude)
+        };
+        setObserverInputs(state.observer);
+        saveObserver(state.observer);
+        ui.locationStatus.textContent = "Observer position updated.";
+      },
+      () => {
+        ui.locationStatus.textContent = "Location permission was not granted.";
+      },
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 }
+    );
+  });
+}
+
+function frame(now) {
+  const delta = (now - state.lastFrame) / 1000;
+  state.lastFrame = now;
+
+  if (state.playing) {
+    const minutesPerSecond = Number(ui.speed.value);
+    state.date = new Date(state.date.getTime() + delta * minutesPerSecond * 60000);
+    setDateInput(state.date);
+  }
+
+  resize();
+  syncCameraFov();
+  updateBodies();
+  updateReadout();
+  updateCameraView();
+  controls.update();
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+
+function updateBodies() {
+  const sunPosition = solarPosition(state.date);
+  const moonPosition = lunarPosition(state.date);
+  const subsolarPoint = geographicSubpoint(state.date, sunPosition.vector);
+  const sublunarPoint = geographicSubpoint(state.date, moonPosition.vector);
+
+  const sunEarthDirection = geographicToEarthVector(subsolarPoint);
+  const moonEarthDirection = geographicToEarthVector(sublunarPoint);
+  const sunWorldDirection = sunEarthDirection.clone().normalize();
+  const moonWorldDirection = moonEarthDirection.clone().normalize();
+  const sunScenePosition = sunWorldDirection.clone().multiplyScalar(6.8);
+  const moonScenePosition = moonWorldDirection.clone().multiplyScalar(2.15);
+
+  sun.position.copy(sunScenePosition);
+  moon.position.copy(moonScenePosition);
+  sunlight.position.copy(sunScenePosition);
+  earth.material.uniforms.sunDirection.value.copy(sunWorldDirection);
+  earthClouds.material.uniforms.sunDirection.value.copy(sunWorldDirection);
+  sunLine.geometry.setFromPoints([new THREE.Vector3(0, 0, 0), sunScenePosition]);
+  moonLine.geometry.setFromPoints([new THREE.Vector3(0, 0, 0), moonScenePosition]);
+
+  const observerDirection = geographicToEarthVector(state.observer);
+  const markerPosition = observerDirection.clone().multiplyScalar(0.68);
+  const observerWorldDirection = observerDirection.clone().normalize();
+  observerMarker.position.copy(markerPosition);
+  subsolarMarker.position.copy(sunEarthDirection.clone().multiplyScalar(0.69));
+  sublunarMarker.position.copy(moonEarthDirection.clone().multiplyScalar(0.69));
+  observerMarker.material.color.set(surfaceDot(observerWorldDirection, sunWorldDirection) > 0 ? 0xfff1a8 : 0x79a8ff);
+  zenithLine.geometry.setFromPoints([
+    markerPosition,
+    observerDirection.clone().multiplyScalar(1.18)
+  ]);
+}
+
+function updateReadout() {
+  const sunPosition = solarPosition(state.date);
+  const moonPosition = lunarPosition(state.date);
+  const phase = moonPhase(state.date);
+  const sunHorizontal = horizontalCoordinates(state.date, state.observer, sunPosition.vector);
+  const moonHorizontal = horizontalCoordinates(state.date, state.observer, moonPosition.vector);
+  const subsolarPoint = geographicSubpoint(state.date, sunPosition.vector);
+  const sublunarPoint = geographicSubpoint(state.date, moonPosition.vector);
+
+  ui.utcLabel.textContent = state.date.toUTCString();
+  ui.phaseLabel.textContent = `${phase.name} (${Math.round(phase.illumination * 100)}%)`;
+  ui.moonDistance.textContent = `${Math.round(moonPosition.distanceKm).toLocaleString()} km`;
+  ui.sunDistance.textContent = `${sunPosition.distanceAu.toFixed(6)} AU`;
+  ui.moonLongitude.textContent = formatDegrees(moonPosition.longitude);
+  ui.sunLongitude.textContent = formatDegrees(sunPosition.longitude);
+  ui.observerPosition.textContent = formatObserver(state.observer);
+  ui.subsolarPoint.textContent = formatObserver(subsolarPoint);
+  ui.sublunarPoint.textContent = formatObserver(sublunarPoint);
+  ui.moonVisibility.textContent = moonHorizontal.visible ? "Visible" : "Below horizon";
+  ui.moonHorizontal.textContent = formatHorizontal(moonHorizontal);
+  ui.sunVisibility.textContent = sunHorizontal.visible ? "Visible" : "Below horizon";
+  ui.sunHorizontal.textContent = formatHorizontal(sunHorizontal);
+}
+
+function resize() {
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
+  if (canvas.width !== Math.floor(width * renderer.getPixelRatio()) ||
+      canvas.height !== Math.floor(height * renderer.getPixelRatio())) {
+    renderer.setSize(width, height, false);
+    camera.aspect = width / height;
+    camera.updateProjectionMatrix();
+  }
+}
+
+function shiftDays(days) {
+  state.date = new Date(state.date.getTime() + days * 86400000);
+  setDateInput(state.date);
+}
+
+function shiftHours(hours) {
+  state.date = new Date(state.date.getTime() + hours * 3600000);
+  setDateInput(state.date);
+}
+
+function setDateInput(date) {
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  ui.dateTime.value = local.toISOString().slice(0, 16);
+}
+
+function syncPlayButton() {
+  ui.playButton.textContent = state.playing ? "Pause" : "Play";
+  ui.playButton.setAttribute("aria-pressed", String(state.playing));
+}
+
+function syncViewControls() {
+  ui.spaceViewButton.setAttribute("aria-pressed", String(state.viewMode === "space"));
+  ui.povViewButton.setAttribute("aria-pressed", String(state.viewMode === "pov"));
+  ui.povFovControl.hidden = state.viewMode !== "pov";
+  controls.enabled = state.viewMode === "space";
+}
+
+function setViewMode(mode) {
+  if (state.viewMode === mode) return;
+
+  state.viewMode = mode;
+  syncViewControls();
+  syncCameraFov();
+  updateGraphicsControls();
+
+  if (mode === "space") {
+    camera.position.copy(spaceCameraPosition);
+    controls.target.copy(spaceCameraTarget);
+    controls.update();
+  }
+}
+
+function syncPovFovLabel() {
+  ui.povFovValue.textContent = `${Number(ui.povFov.value).toFixed(1)}x`;
+}
+
+function syncCameraFov() {
+  const exaggeration = Number(ui.povFov.value);
+  const targetFov = state.viewMode === "pov"
+    ? THREE.MathUtils.lerp(SPACE_FOV, MAX_POV_FOV, (exaggeration - 1) / 2)
+    : SPACE_FOV;
+
+  if (Math.abs(camera.fov - targetFov) < 0.01) return;
+
+  camera.fov = targetFov;
+  camera.updateProjectionMatrix();
+}
+
+function setObserverInputs(observer) {
+  ui.latitude.value = observer.latitude.toFixed(4);
+  ui.longitude.value = observer.longitude.toFixed(4);
+}
+
+function readObserverInputs() {
+  const latitude = Number(ui.latitude.value);
+  const longitude = Number(ui.longitude.value);
+
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude) ||
+      latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+    ui.locationStatus.textContent = "Enter latitude -90 to 90 and longitude -180 to 180.";
+    return;
+  }
+
+  state.observer = {
+    latitude: roundCoordinate(latitude),
+    longitude: roundCoordinate(longitude)
+  };
+  setObserverInputs(state.observer);
+  saveObserver(state.observer);
+  ui.locationStatus.textContent = "Observer position updated.";
+}
+
+function loadObserver() {
+  try {
+    const saved = JSON.parse(localStorage.getItem("moonviz-observer"));
+    if (saved && Number.isFinite(saved.latitude) && Number.isFinite(saved.longitude) &&
+        saved.latitude >= -90 && saved.latitude <= 90 &&
+        saved.longitude >= -180 && saved.longitude <= 180) {
+      return {
+        latitude: saved.latitude,
+        longitude: saved.longitude
+      };
+    }
+  } catch {
+    return DEFAULT_OBSERVER;
+  }
+  return DEFAULT_OBSERVER;
+}
+
+function saveObserver(observer) {
+  localStorage.setItem("moonviz-observer", JSON.stringify(observer));
+}
+
+function roundCoordinate(value) {
+  return Math.round(value * 10000) / 10000;
+}
+
+function formatHorizontal(position) {
+  return `${formatSignedDegrees(position.altitude)} / ${formatDegrees(position.azimuth)}`;
+}
+
+function formatObserver(observer) {
+  const latitudeHemisphere = observer.latitude >= 0 ? "N" : "S";
+  const longitudeHemisphere = observer.longitude >= 0 ? "E" : "W";
+  return `${Math.abs(observer.latitude).toFixed(4)} ${latitudeHemisphere}, ${Math.abs(observer.longitude).toFixed(4)} ${longitudeHemisphere}`;
+}
+
+function updateCameraView() {
+  if (state.viewMode !== "pov") return;
+
+  const observerDirection = geographicToEarthVector(state.observer);
+  const observerWorldDirection = observerDirection.clone().normalize();
+  const surface = observerWorldDirection.clone().multiplyScalar(0.72);
+  const north = geographicNorthVector(state.observer).normalize();
+  const west = geographicWestVector(state.observer).normalize();
+
+  camera.position.copy(surface)
+    .add(observerWorldDirection.clone().multiplyScalar(0.38))
+    .add(north.multiplyScalar(0.18))
+    .add(west.multiplyScalar(0.12));
+  controls.target.copy(surface.clone().add(observerWorldDirection.clone().multiplyScalar(1.3)));
+}
+
+function updateGraphicsControls() {
+  const contrast = Number(ui.contrast.value) / 100;
+  earth.material.uniforms.nightStrength.value = contrast;
+  const pov = state.viewMode === "pov";
+
+  earth.visible = !pov;
+  earthClouds.visible = !pov && ui.showClouds.checked;
+  moonOrbit.visible = ui.showOrbits.checked;
+  eclipticRing.visible = ui.showOrbits.checked;
+  sunLine.visible = ui.showLines.checked;
+  moonLine.visible = ui.showLines.checked;
+  zenithLine.visible = !pov && ui.showLines.checked && ui.showObserver.checked;
+  stars.visible = ui.showStars.checked;
+  sun.visible = ui.showSun.checked;
+  moon.visible = ui.showMoon.checked;
+  observerMarker.visible = !pov && ui.showObserver.checked;
+  subsolarMarker.visible = !pov && ui.showSubpoints.checked;
+  sublunarMarker.visible = !pov && ui.showSubpoints.checked;
+}
+
+function graphicsCheckboxes() {
+  return [
+    ui.showClouds,
+    ui.showOrbits,
+    ui.showLines,
+    ui.showStars,
+    ui.showSun,
+    ui.showMoon,
+    ui.showObserver,
+    ui.showSubpoints
+  ];
+}
+
+function geographicToEarthVector(observer) {
+  const latitude = THREE.MathUtils.degToRad(Math.min(90, Math.max(-90, observer.latitude)));
+  const longitude = THREE.MathUtils.degToRad((((observer.longitude + 180) % 360) + 360) % 360 - 180);
+  const cosLatitude = Math.cos(latitude);
+
+  return new THREE.Vector3(
+    cosLatitude * Math.cos(longitude),
+    Math.sin(latitude),
+    -cosLatitude * Math.sin(longitude)
+  ).normalize();
+}
+
+function geographicNorthVector(observer) {
+  const latitude = THREE.MathUtils.degToRad(Math.min(90, Math.max(-90, observer.latitude)));
+  const longitude = THREE.MathUtils.degToRad((((observer.longitude + 180) % 360) + 360) % 360 - 180);
+
+  return new THREE.Vector3(
+    -Math.sin(latitude) * Math.cos(longitude),
+    Math.cos(latitude),
+    Math.sin(latitude) * Math.sin(longitude)
+  ).normalize();
+}
+
+function geographicWestVector(observer) {
+  const longitude = THREE.MathUtils.degToRad((((observer.longitude + 180) % 360) + 360) % 360 - 180);
+
+  return new THREE.Vector3(
+    Math.sin(longitude),
+    0,
+    Math.cos(longitude)
+  ).normalize();
+}
+
+function surfaceDot(surfaceDirection, bodyDirection) {
+  return surfaceDirection.clone().normalize().dot(bodyDirection.clone().normalize());
+}
+
+function createOrbitRing(radius, color, opacity) {
+  const points = [];
+  for (let i = 0; i <= 192; i++) {
+    const angle = (i / 192) * Math.PI * 2;
+    points.push(new THREE.Vector3(Math.cos(angle) * radius, 0, Math.sin(angle) * radius));
+  }
+  const material = new THREE.LineBasicMaterial({
+    color,
+    transparent: true,
+    opacity
+  });
+  return new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(points), material);
+}
+
+function createRadialLine(color, opacity) {
+  return new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(1, 0, 0)]),
+    new THREE.LineBasicMaterial({ color, transparent: true, opacity })
+  );
+}
+
+function createStars(count) {
+  const positions = new Float32Array(count * 3);
+  for (let i = 0; i < count; i++) {
+    const z = Math.random() * 2 - 1;
+    const angle = Math.random() * Math.PI * 2;
+    const ring = Math.sqrt(1 - z * z);
+    const radius = 28;
+    positions[i * 3] = Math.cos(angle) * ring * radius;
+    positions[i * 3 + 1] = z * radius;
+    positions[i * 3 + 2] = Math.sin(angle) * ring * radius;
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  return new THREE.Points(
+    geometry,
+    new THREE.PointsMaterial({
+      color: 0xbfd2d8,
+      size: 0.045,
+      transparent: true,
+      opacity: 0.78,
+      depthWrite: false
+    })
+  );
+}
