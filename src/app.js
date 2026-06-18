@@ -72,10 +72,9 @@ renderer.setClearColor(0x061014, 1);
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0x061014, 12, 34);
 
-const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+const camera = new THREE.PerspectiveCamera(90, 1, 0.1, 100);
 camera.position.set(-4.4, 2.6, 5.4);
-const SPACE_FOV = 45;
-const POV_FOV = 80;
+const SPACE_FOV = 90;
 const EARTH_CENTER_SUN_DISTANCE = 6.8;
 const EARTH_CENTER_MOON_DISTANCE = 2.15;
 const SUN_CENTER_EARTH_DISTANCE = 3.9;
@@ -345,7 +344,9 @@ function frame(now) {
   updateBodies();
   updateReadout();
   updateCameraView();
-  controls.update();
+  if (state.viewMode === "space") {
+    controls.update();
+  }
   updateCompass();
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
@@ -521,9 +522,7 @@ function syncPovFovLabel() {
 }
 
 function syncCameraFov() {
-  const targetFov = state.viewMode === "pov"
-    ? POV_FOV
-    : SPACE_FOV;
+  const targetFov = SPACE_FOV;
 
   if (Math.abs(camera.fov - targetFov) < 0.01) return;
 
@@ -680,19 +679,28 @@ function formatObserver(observer) {
 function updateCameraView() {
   if (state.viewMode !== "pov") return;
 
-  const povWidth = Number(ui.povFov.value);
+  const zoomFactor = Number(ui.povFov.value);
+  const zoomDistanceScale = 1 / Math.max(zoomFactor, 0.1);
 
   if (state.centerMode === "sun") {
     const toEarth = earth.position.clone().sub(sun.position).normalize();
-    camera.position.copy(sun.position).add(toEarth.clone().multiplyScalar(0.32 * povWidth));
-    controls.target.copy(earth.position);
+    const target = earth.position.clone();
+    const baseCameraPosition = sun.position.clone().add(toEarth.clone().multiplyScalar(0.32));
+    const baseOffset = baseCameraPosition.sub(target);
+    camera.position.copy(target).add(baseOffset.multiplyScalar(zoomDistanceScale));
+    controls.target.copy(target);
+    camera.lookAt(target);
     return;
   }
 
   if (state.centerMode === "moon") {
     const toEarth = earth.position.clone().sub(moon.position).normalize();
-    camera.position.copy(moon.position).add(toEarth.clone().multiplyScalar(0.24 * povWidth));
-    controls.target.copy(earth.position);
+    const target = earth.position.clone();
+    const baseCameraPosition = moon.position.clone().add(toEarth.clone().multiplyScalar(0.24));
+    const baseOffset = baseCameraPosition.sub(target);
+    camera.position.copy(target).add(baseOffset.multiplyScalar(zoomDistanceScale));
+    controls.target.copy(target);
+    camera.lookAt(target);
     return;
   }
 
@@ -701,12 +709,16 @@ function updateCameraView() {
   const surface = earth.position.clone().add(observerWorldDirection.clone().multiplyScalar(0.72));
   const north = geographicNorthVector(state.observer).normalize();
   const west = geographicWestVector(state.observer).normalize();
+  const target = surface.clone().add(observerWorldDirection.clone().multiplyScalar(1.3));
+  const baseCameraPosition = surface.clone()
+    .add(observerWorldDirection.clone().multiplyScalar(0.38))
+    .add(north.multiplyScalar(0.18))
+    .add(west.multiplyScalar(0.12));
+  const baseOffset = baseCameraPosition.sub(target);
 
-  camera.position.copy(surface)
-    .add(observerWorldDirection.clone().multiplyScalar(0.38 * povWidth))
-    .add(north.multiplyScalar(0.18 * povWidth))
-    .add(west.multiplyScalar(0.12 * povWidth));
-  controls.target.copy(surface.clone().add(observerWorldDirection.clone().multiplyScalar(1.3 * povWidth)));
+  camera.position.copy(target).add(baseOffset.multiplyScalar(zoomDistanceScale));
+  controls.target.copy(target);
+  camera.lookAt(target);
 }
 
 function updateCompass() {
