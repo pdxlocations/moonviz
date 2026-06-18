@@ -30,7 +30,21 @@ The same commands work on macOS Terminal, Windows PowerShell, Windows Terminal, 
 
 ## Docker
 
-Build and run MoonViz with Docker:
+Run MoonViz with Docker Compose:
+
+```sh
+docker compose up --build
+```
+
+Then open:
+
+```text
+http://localhost:8123/
+```
+
+If you are connecting from another device on the same network, replace `localhost` with the Linux box's IP address.
+
+You can also build and run MoonViz with plain Docker:
 
 ```sh
 docker build -t moonviz .

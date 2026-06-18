@@ -1,0 +1,9 @@
+services:
+  moonviz:
+    build: .
+    image: moonviz
+    ports:
+      - "8123:8123"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8123
