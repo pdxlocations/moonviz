@@ -261,6 +261,31 @@ input[type="checkbox"] {
   accent-color: var(--accent);
 }
 
+.speed-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.speed-row input[type="range"] {
+  width: 100%;
+}
+
+.speed-boost {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.speed-boosts {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .button-row {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

@@ -20,6 +20,9 @@ const ui = {
   minusHourButton: document.querySelector("#minusHourButton"),
   plusHourButton: document.querySelector("#plusHourButton"),
   speed: document.querySelector("#speed"),
+  speed10x: document.querySelector("#speed10x"),
+  speed100x: document.querySelector("#speed100x"),
+  speed1000x: document.querySelector("#speed1000x"),
   playButton: document.querySelector("#playButton"),
   resetViewButton: document.querySelector("#resetViewButton"),
   spaceViewButton: document.querySelector("#spaceViewButton"),
@@ -295,6 +298,40 @@ function bindEvents() {
     updateCameraView();
   });
 
+  ui.speed10x.addEventListener("change", () => {
+    enforceExclusiveSpeedBoost("10x", ui.speed10x.checked);
+  });
+
+  ui.speed100x.addEventListener("change", () => {
+    enforceExclusiveSpeedBoost("100x", ui.speed100x.checked);
+  });
+
+  ui.speed1000x.addEventListener("change", () => {
+    enforceExclusiveSpeedBoost("1000x", ui.speed1000x.checked);
+  });
+
+  canvas.addEventListener("wheel", (event) => {
+    if (state.viewMode !== "pov") return;
+
+    event.preventDefault();
+    const min = Number(ui.povFov.min);
+    const max = Number(ui.povFov.max);
+    const step = Number(ui.povFov.step) || 0.1;
+    const current = Number(ui.povFov.value);
+    const direction = event.deltaY < 0 ? 1 : -1;
+    const magnitude = Math.min(4, Math.abs(event.deltaY) / 100);
+    const nextRaw = current + direction * step * magnitude;
+    const snapped = Math.round(nextRaw / step) * step;
+    const next = THREE.MathUtils.clamp(snapped, min, max);
+
+    if (Math.abs(next - current) < 1e-9) return;
+
+    ui.povFov.value = next.toFixed(2).replace(/\.00$/, "");
+    syncPovFovLabel();
+    syncCameraFov();
+    updateCameraView();
+  }, { passive: false });
+
   ui.contrast.addEventListener("input", updateGraphicsControls);
 
   for (const checkbox of graphicsCheckboxes()) {
@@ -334,7 +371,8 @@ function frame(now) {
   state.lastFrame = now;
 
   if (state.playing) {
-    const minutesPerSecond = Number(ui.speed.value);
+    const speedMultiplier = selectedSpeedMultiplier();
+    const minutesPerSecond = Number(ui.speed.value) * speedMultiplier;
     state.date = new Date(state.date.getTime() + delta * minutesPerSecond * 60000);
     setDateInput(state.date);
   }
@@ -350,6 +388,32 @@ function frame(now) {
   updateCompass();
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
+}
+
+function selectedSpeedMultiplier() {
+  const multipliers = [
+    ui.speed10x.checked ? 10 : 1,
+    ui.speed100x.checked ? 100 : 1,
+    ui.speed1000x.checked ? 1000 : 1
+  ];
+
+  return Math.max(...multipliers);
+}
+
+function enforceExclusiveSpeedBoost(selectedBoost, isChecked) {
+  if (!isChecked) return;
+
+  const toggles = {
+    "10x": ui.speed10x,
+    "100x": ui.speed100x,
+    "1000x": ui.speed1000x
+  };
+
+  for (const [boost, checkbox] of Object.entries(toggles)) {
+    if (boost !== selectedBoost) {
+      checkbox.checked = false;
+    }
+  }
 }
 
 function updateBodies() {
@@ -831,7 +895,8 @@ function createOrbitRing(radius, color, opacity) {
   const material = new THREE.LineBasicMaterial({
     color,
     transparent: true,
-    opacity
+    opacity,
+    linewidth: 1.5
   });
   return new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(points), material);
 }

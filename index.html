@@ -42,7 +42,14 @@
 
         <div class="section controls">
           <label for="speed">Animation speed</label>
-          <input id="speed" type="range" min="0" max="120" value="12">
+          <div class="speed-row">
+            <input id="speed" type="range" min="0" max="120" value="12">
+            <div class="speed-boosts">
+              <label for="speed10x" class="speed-boost"><input id="speed10x" type="checkbox"> 10x</label>
+              <label for="speed100x" class="speed-boost"><input id="speed100x" type="checkbox"> 100x</label>
+              <label for="speed1000x" class="speed-boost"><input id="speed1000x" type="checkbox"> 1000x</label>
+            </div>
+          </div>
           <div class="button-row">
             <button id="playButton" type="button" aria-pressed="false">Play</button>
             <button id="resetViewButton" type="button">Reset view</button>
