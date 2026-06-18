@@ -231,6 +231,13 @@ for (const mode of ["earth", "sun", "moon"]) {
 
   const earthToSun = layout.sun.clone().sub(layout.earth).normalize();
   const earthToMoon = layout.moon.clone().sub(layout.earth).normalize();
+  const eclipticRelativeBody = mode === "sun"
+    ? layout.earth.clone().sub(layout.eclipticCenter)
+    : layout.sun.clone().sub(layout.eclipticCenter);
+  const earthToMoonPlaneDistance = Math.abs(earthToMoon.dot(layout.moonOrbitNormal));
+  const eclipticPlaneDistance = Math.abs(eclipticRelativeBody.clone().normalize().dot(layout.eclipticRingNormal));
+  const moonOrbitRadius = 2.15 * layout.moonOrbitScale;
+  const eclipticRingRadius = 6.8 * layout.eclipticScale;
   assert.ok(
     angleBetween(earthToSun, layout.sunDirection) < 1e-7,
     `expected ${mode} mode Earth-to-Sun vector to match layout Sun direction`
@@ -238,6 +245,22 @@ for (const mode of ["earth", "sun", "moon"]) {
   assert.ok(
     angleBetween(earthToMoon, layout.moonDirection) < 1e-7,
     `expected ${mode} mode Earth-to-Moon vector to match layout Moon direction`
+  );
+  assert.ok(
+    earthToMoonPlaneDistance < 0.03,
+    `expected ${mode} mode Moon body to sit near its orbit ring plane, got ${earthToMoonPlaneDistance}`
+  );
+  assert.ok(
+    eclipticPlaneDistance < 1e-12,
+    `expected ${mode} mode ecliptic body to sit on its orbit ring plane, got ${eclipticPlaneDistance}`
+  );
+  assert.ok(
+    Math.abs(layout.moon.clone().sub(layout.earth).length() - moonOrbitRadius) < 1e-12,
+    `expected ${mode} mode Moon body to sit on moon orbit radius`
+  );
+  assert.ok(
+    Math.abs(eclipticRelativeBody.length() - eclipticRingRadius) < 1e-12,
+    `expected ${mode} mode ecliptic body to sit on ecliptic ring radius`
   );
 }
 
@@ -293,34 +316,59 @@ function centeredLayout(date, mode) {
 
   if (mode === "sun") {
     const earth = sunCenteredFrameDirection.clone().multiplyScalar(-SUN_CENTER_EARTH_DISTANCE);
+    const sun = new THREE.Vector3(0, 0, 0);
+    const moon = earth.clone().add(moonCenteredFrameDirection.clone().multiplyScalar(SUN_CENTER_MOON_DISTANCE));
+    const eclipticCenter = new THREE.Vector3(0, 0, 0);
     return {
       earth,
-      sun: new THREE.Vector3(0, 0, 0),
-      moon: earth.clone().add(moonCenteredFrameDirection.clone().multiplyScalar(SUN_CENTER_MOON_DISTANCE)),
+      sun,
+      moon,
       sunDirection: sunCenteredFrameDirection,
       moonDirection: moonCenteredFrameDirection,
+      moonOrbitNormal: ringNormalThroughDirection(moon.clone().sub(earth)),
+      moonOrbitScale: SUN_CENTER_MOON_DISTANCE / EARTH_CENTER_MOON_DISTANCE,
+      eclipticCenter,
+      eclipticRingNormal: ringNormalThroughDirection(earth.clone().sub(eclipticCenter)),
+      eclipticScale: SUN_CENTER_EARTH_DISTANCE / EARTH_CENTER_SUN_DISTANCE,
       earthOrientation
     };
   }
 
   if (mode === "moon") {
     const earth = moonCenteredFrameDirection.clone().multiplyScalar(-MOON_CENTER_EARTH_DISTANCE);
+    const sun = earth.clone().add(sunCenteredFrameDirection.clone().multiplyScalar(MOON_CENTER_SUN_DISTANCE));
+    const moon = new THREE.Vector3(0, 0, 0);
+    const eclipticCenter = earth.clone();
     return {
       earth,
-      sun: earth.clone().add(sunCenteredFrameDirection.clone().multiplyScalar(MOON_CENTER_SUN_DISTANCE)),
-      moon: new THREE.Vector3(0, 0, 0),
+      sun,
+      moon,
       sunDirection: sunCenteredFrameDirection,
       moonDirection: moonCenteredFrameDirection,
+      moonOrbitNormal: ringNormalThroughDirection(moon.clone().sub(earth)),
+      moonOrbitScale: 1,
+      eclipticCenter,
+      eclipticRingNormal: ringNormalThroughDirection(sun.clone().sub(eclipticCenter)),
+      eclipticScale: MOON_CENTER_SUN_DISTANCE / EARTH_CENTER_SUN_DISTANCE,
       earthOrientation
     };
   }
 
+  const earth = new THREE.Vector3(0, 0, 0);
+  const sun = sunEarthDirection.clone().multiplyScalar(EARTH_CENTER_SUN_DISTANCE);
+  const moon = moonEarthDirection.clone().multiplyScalar(EARTH_CENTER_MOON_DISTANCE);
+  const eclipticCenter = new THREE.Vector3(0, 0, 0);
   return {
-    earth: new THREE.Vector3(0, 0, 0),
-    sun: sunEarthDirection.clone().multiplyScalar(EARTH_CENTER_SUN_DISTANCE),
-    moon: moonEarthDirection.clone().multiplyScalar(EARTH_CENTER_MOON_DISTANCE),
+    earth,
+    sun,
+    moon,
     sunDirection: sunEarthDirection,
     moonDirection: moonEarthDirection,
+    moonOrbitNormal: ringNormalThroughDirection(moon.clone().sub(earth)),
+    moonOrbitScale: 1,
+    eclipticCenter,
+    eclipticRingNormal: ringNormalThroughDirection(sun.clone().sub(eclipticCenter)),
+    eclipticScale: 1,
     earthOrientation: new THREE.Quaternion()
   };
 }
@@ -340,6 +388,18 @@ function earthLocalToWorldDirectionForMode(localDirection, orientation, mode) {
   return markerFrameLocalDirectionForMode(localDirection, mode)
     .applyQuaternion(orientation)
     .normalize();
+}
+
+function ringNormalThroughDirection(direction) {
+  const eclipticNormal = new THREE.Vector3(0, 1, 0);
+  const unitDirection = direction.clone().normalize();
+  let normal = eclipticNormal.clone().sub(unitDirection.clone().multiplyScalar(eclipticNormal.dot(unitDirection)));
+
+  if (normal.lengthSq() < 1e-8) {
+    normal = new THREE.Vector3(1, 0, 0).sub(unitDirection.clone().multiplyScalar(unitDirection.x));
+  }
+
+  return normal.normalize();
 }
 
 function markerFrameLocalDirectionForMode(localDirection, mode) {

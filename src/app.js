@@ -38,6 +38,7 @@ const ui = {
   showMoon: document.querySelector("#showMoon"),
   showObserver: document.querySelector("#showObserver"),
   showSubpoints: document.querySelector("#showSubpoints"),
+  showPoles: document.querySelector("#showPoles"),
   latitude: document.querySelector("#latitude"),
   longitude: document.querySelector("#longitude"),
   useLocationButton: document.querySelector("#useLocationButton"),
@@ -74,13 +75,14 @@ scene.fog = new THREE.Fog(0x061014, 12, 34);
 const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
 camera.position.set(-4.4, 2.6, 5.4);
 const SPACE_FOV = 45;
-const MAX_POV_FOV = 120;
+const POV_FOV = 80;
 const EARTH_CENTER_SUN_DISTANCE = 6.8;
 const EARTH_CENTER_MOON_DISTANCE = 2.15;
 const SUN_CENTER_EARTH_DISTANCE = 3.9;
 const SUN_CENTER_MOON_DISTANCE = 1.35;
 const MOON_CENTER_EARTH_DISTANCE = 2.15;
 const MOON_CENTER_SUN_DISTANCE = 6.8;
+const ECLIPTIC_NORMAL = new THREE.Vector3(0, 1, 0);
 const spaceCameraPosition = new THREE.Vector3(-4.4, 2.6, 5.4);
 const sunCenterCameraPosition = new THREE.Vector3(-5.6, 3.2, 6.4);
 const moonCenterCameraPosition = new THREE.Vector3(-4.2, 2.5, 4.8);
@@ -192,7 +194,7 @@ const sun = new THREE.Mesh(
 scene.add(sun);
 
 const moonOrbit = createOrbitRing(2.15, 0xb8c5c9, 0.28);
-const eclipticRing = createOrbitRing(3.9, 0xf4bd58, 0.18);
+const eclipticRing = createOrbitRing(EARTH_CENTER_SUN_DISTANCE, 0xf4bd58, 0.18);
 scene.add(moonOrbit, eclipticRing);
 
 const sunLine = createRadialLine(0xf6c563, 0.55);
@@ -211,8 +213,16 @@ const sublunarMarker = new THREE.Mesh(
   new THREE.SphereGeometry(0.024, 18, 12),
   new THREE.MeshBasicMaterial({ color: 0xd7dee2 })
 );
+const northPoleMarker = new THREE.Mesh(
+  new THREE.SphereGeometry(0.026, 18, 12),
+  new THREE.MeshBasicMaterial({ color: 0x64d2ff })
+);
+const southPoleMarker = new THREE.Mesh(
+  new THREE.SphereGeometry(0.026, 18, 12),
+  new THREE.MeshBasicMaterial({ color: 0xff7fb8 })
+);
 const zenithLine = createRadialLine(0xfff1a8, 0.72);
-scene.add(observerMarker, subsolarMarker, sublunarMarker, zenithLine);
+scene.add(observerMarker, subsolarMarker, sublunarMarker, northPoleMarker, southPoleMarker, zenithLine);
 
 const stars = createStars(720);
 scene.add(stars);
@@ -283,6 +293,7 @@ function bindEvents() {
   ui.povFov.addEventListener("input", () => {
     syncPovFovLabel();
     syncCameraFov();
+    updateCameraView();
   });
 
   ui.contrast.addEventListener("input", updateGraphicsControls);
@@ -369,8 +380,10 @@ function updateBodies() {
   moon.position.copy(layout.moon);
   moonOrbit.position.copy(layout.earth);
   moonOrbit.scale.setScalar(layout.moonOrbitScale);
+  alignRingToNormal(moonOrbit, layout.moonOrbitNormal);
   eclipticRing.position.copy(layout.eclipticCenter);
   eclipticRing.scale.setScalar(layout.eclipticScale);
+  alignRingToNormal(eclipticRing, layout.eclipticRingNormal);
   sunlight.position.copy(layout.sun);
   sunlight.target.position.copy(layout.earth);
   earth.material.uniforms.sunDirection.value.copy(layout.sunDirection);
@@ -386,10 +399,14 @@ function updateBodies() {
     ? earthLocalToWorldDirection(moonEarthDirection)
     : layout.moonDirection.clone();
   const observerWorldDirection = earthLocalToWorldDirection(observerDirection);
+  const northPoleDirection = earthLocalToWorldDirection(new THREE.Vector3(0, 1, 0));
+  const southPoleDirection = earthLocalToWorldDirection(new THREE.Vector3(0, -1, 0));
   const observerPosition = layout.earth.clone().add(observerWorldDirection.clone().multiplyScalar(0.68));
   observerMarker.position.copy(observerPosition);
   subsolarMarker.position.copy(layout.earth.clone().add(subsolarDirection.clone().multiplyScalar(0.69)));
   sublunarMarker.position.copy(layout.earth.clone().add(sublunarDirection.clone().multiplyScalar(0.69)));
+  northPoleMarker.position.copy(layout.earth.clone().add(northPoleDirection.clone().multiplyScalar(0.7)));
+  southPoleMarker.position.copy(layout.earth.clone().add(southPoleDirection.clone().multiplyScalar(0.7)));
   observerMarker.material.color.set(surfaceDot(observerWorldDirection, layout.sunDirection) > 0 ? 0xfff1a8 : 0x79a8ff);
   zenithLine.geometry.setFromPoints([
     observerPosition,
@@ -504,9 +521,8 @@ function syncPovFovLabel() {
 }
 
 function syncCameraFov() {
-  const exaggeration = Number(ui.povFov.value);
   const targetFov = state.viewMode === "pov"
-    ? THREE.MathUtils.lerp(SPACE_FOV, MAX_POV_FOV, (exaggeration - 1) / 2)
+    ? POV_FOV
     : SPACE_FOV;
 
   if (Math.abs(camera.fov - targetFov) < 0.01) return;
@@ -518,43 +534,56 @@ function syncCameraFov() {
 function sceneLayout(directions) {
   if (state.centerMode === "sun") {
     const earthPosition = directions.sunCenteredFrameDirection.clone().multiplyScalar(-SUN_CENTER_EARTH_DISTANCE);
+    const moonPosition = earthPosition.clone().add(directions.moonCenteredFrameDirection.clone().multiplyScalar(SUN_CENTER_MOON_DISTANCE));
+    const eclipticCenter = new THREE.Vector3(0, 0, 0);
     return {
       earth: earthPosition,
       earthOrientation: directions.earthOrientation,
       sun: new THREE.Vector3(0, 0, 0),
-      moon: earthPosition.clone().add(directions.moonCenteredFrameDirection.clone().multiplyScalar(SUN_CENTER_MOON_DISTANCE)),
+      moon: moonPosition,
       sunDirection: directions.sunCenteredFrameDirection,
       moonDirection: directions.moonCenteredFrameDirection,
+      moonOrbitNormal: ringNormalThroughDirection(moonPosition.clone().sub(earthPosition)),
       moonOrbitScale: SUN_CENTER_MOON_DISTANCE / EARTH_CENTER_MOON_DISTANCE,
-      eclipticCenter: new THREE.Vector3(0, 0, 0),
-      eclipticScale: SUN_CENTER_EARTH_DISTANCE / 3.9
+      eclipticCenter,
+      eclipticRingNormal: ringNormalThroughDirection(earthPosition.clone().sub(eclipticCenter)),
+      eclipticScale: SUN_CENTER_EARTH_DISTANCE / EARTH_CENTER_SUN_DISTANCE
     };
   }
 
   if (state.centerMode === "moon") {
     const earthPosition = directions.moonCenteredFrameDirection.clone().multiplyScalar(-MOON_CENTER_EARTH_DISTANCE);
+    const sunPosition = earthPosition.clone().add(directions.sunCenteredFrameDirection.clone().multiplyScalar(MOON_CENTER_SUN_DISTANCE));
+    const eclipticCenter = earthPosition.clone();
     return {
       earth: earthPosition,
       earthOrientation: directions.earthOrientation,
-      sun: earthPosition.clone().add(directions.sunCenteredFrameDirection.clone().multiplyScalar(MOON_CENTER_SUN_DISTANCE)),
+      sun: sunPosition,
       moon: new THREE.Vector3(0, 0, 0),
       sunDirection: directions.sunCenteredFrameDirection,
       moonDirection: directions.moonCenteredFrameDirection,
+      moonOrbitNormal: ringNormalThroughDirection(new THREE.Vector3().sub(earthPosition)),
       moonOrbitScale: 1,
-      eclipticCenter: earthPosition,
+      eclipticCenter,
+      eclipticRingNormal: ringNormalThroughDirection(sunPosition.clone().sub(eclipticCenter)),
       eclipticScale: MOON_CENTER_SUN_DISTANCE / EARTH_CENTER_SUN_DISTANCE
     };
   }
 
+  const eclipticCenter = new THREE.Vector3(0, 0, 0);
+  const sunPosition = directions.sunEarthDirection.clone().multiplyScalar(EARTH_CENTER_SUN_DISTANCE);
+  const moonPosition = directions.moonEarthDirection.clone().multiplyScalar(EARTH_CENTER_MOON_DISTANCE);
   return {
-    earth: new THREE.Vector3(0, 0, 0),
+    earth: eclipticCenter,
     earthOrientation: new THREE.Quaternion(),
-    sun: directions.sunEarthDirection.clone().multiplyScalar(EARTH_CENTER_SUN_DISTANCE),
-    moon: directions.moonEarthDirection.clone().multiplyScalar(EARTH_CENTER_MOON_DISTANCE),
+    sun: sunPosition,
+    moon: moonPosition,
     sunDirection: directions.sunEarthDirection,
     moonDirection: directions.moonEarthDirection,
+    moonOrbitNormal: ringNormalThroughDirection(moonPosition),
     moonOrbitScale: 1,
-    eclipticCenter: new THREE.Vector3(0, 0, 0),
+    eclipticCenter,
+    eclipticRingNormal: ringNormalThroughDirection(sunPosition),
     eclipticScale: 1
   };
 }
@@ -572,6 +601,21 @@ function earthOrientationQuaternion(date) {
 
 function earthLocalToWorldDirection(localDirection) {
   return localDirection.clone().applyQuaternion(earth.quaternion).normalize();
+}
+
+function alignRingToNormal(ring, normal) {
+  ring.quaternion.setFromUnitVectors(ECLIPTIC_NORMAL, normal.clone().normalize());
+}
+
+function ringNormalThroughDirection(direction) {
+  const unitDirection = direction.clone().normalize();
+  let normal = ECLIPTIC_NORMAL.clone().sub(unitDirection.clone().multiplyScalar(ECLIPTIC_NORMAL.dot(unitDirection)));
+
+  if (normal.lengthSq() < 1e-8) {
+    normal = new THREE.Vector3(1, 0, 0).sub(unitDirection.clone().multiplyScalar(unitDirection.x));
+  }
+
+  return normal.normalize();
 }
 
 function setObserverInputs(observer) {
@@ -636,16 +680,18 @@ function formatObserver(observer) {
 function updateCameraView() {
   if (state.viewMode !== "pov") return;
 
+  const povWidth = Number(ui.povFov.value);
+
   if (state.centerMode === "sun") {
     const toEarth = earth.position.clone().sub(sun.position).normalize();
-    camera.position.copy(sun.position).add(toEarth.clone().multiplyScalar(0.32));
+    camera.position.copy(sun.position).add(toEarth.clone().multiplyScalar(0.32 * povWidth));
     controls.target.copy(earth.position);
     return;
   }
 
   if (state.centerMode === "moon") {
     const toEarth = earth.position.clone().sub(moon.position).normalize();
-    camera.position.copy(moon.position).add(toEarth.clone().multiplyScalar(0.24));
+    camera.position.copy(moon.position).add(toEarth.clone().multiplyScalar(0.24 * povWidth));
     controls.target.copy(earth.position);
     return;
   }
@@ -657,10 +703,10 @@ function updateCameraView() {
   const west = geographicWestVector(state.observer).normalize();
 
   camera.position.copy(surface)
-    .add(observerWorldDirection.clone().multiplyScalar(0.38))
-    .add(north.multiplyScalar(0.18))
-    .add(west.multiplyScalar(0.12));
-  controls.target.copy(surface.clone().add(observerWorldDirection.clone().multiplyScalar(1.3)));
+    .add(observerWorldDirection.clone().multiplyScalar(0.38 * povWidth))
+    .add(north.multiplyScalar(0.18 * povWidth))
+    .add(west.multiplyScalar(0.12 * povWidth));
+  controls.target.copy(surface.clone().add(observerWorldDirection.clone().multiplyScalar(1.3 * povWidth)));
 }
 
 function updateCompass() {
@@ -706,6 +752,8 @@ function updateGraphicsControls() {
   observerMarker.visible = !earthPov && ui.showObserver.checked;
   subsolarMarker.visible = !pov && ui.showSubpoints.checked;
   sublunarMarker.visible = !pov && ui.showSubpoints.checked;
+  northPoleMarker.visible = !earthPov && ui.showPoles.checked;
+  southPoleMarker.visible = !earthPov && ui.showPoles.checked;
 }
 
 function graphicsCheckboxes() {
@@ -716,7 +764,8 @@ function graphicsCheckboxes() {
     ui.showSun,
     ui.showMoon,
     ui.showObserver,
-    ui.showSubpoints
+    ui.showSubpoints,
+    ui.showPoles
   ];
 }
 
