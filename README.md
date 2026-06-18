@@ -28,6 +28,29 @@ http://localhost:8123/
 
 The same commands work on macOS Terminal, Windows PowerShell, Windows Terminal, and Linux terminals.
 
+## Docker
+
+Build and run MoonViz with Docker:
+
+```sh
+docker build -t moonviz .
+docker run --rm -p 8123:8123 moonviz
+```
+
+Then open:
+
+```text
+http://localhost:8123/
+```
+
+To use a different host port, change the value before the colon:
+
+```sh
+docker run --rm -p 8124:8123 moonviz
+```
+
+Then open `http://localhost:8124/`.
+
 ## Changing The Port
 
 If port `8123` is already in use, start the server with a different port:
