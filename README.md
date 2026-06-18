@@ -1,6 +1,7 @@
 # MoonViz
 
 MoonViz is a local web app for visualizing the Earth, Sun, and Moon for a selected date, time, and observer location. It runs entirely from this folder in a browser.
+<img width="1489" height="849" alt="image" src="https://github.com/user-attachments/assets/d22ac30d-210c-4d70-a8fe-f78d29ed324d" />
 
 ## Requirements
 
