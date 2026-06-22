@@ -10,6 +10,7 @@ import {
   moonPhase,
   solarPosition
 } from "./astro.js";
+import { CONSTELLATIONS, CONSTELLATION_STARS, SKY_RADIUS } from "./sky-data.js";
 
 const canvas = document.querySelector("#space");
 const ui = {
@@ -85,6 +86,7 @@ const SUN_CENTER_MOON_DISTANCE = 1.35;
 const MOON_CENTER_EARTH_DISTANCE = 2.15;
 const MOON_CENTER_SUN_DISTANCE = 6.8;
 const ECLIPTIC_NORMAL = new THREE.Vector3(0, 1, 0);
+const OBLIQUITY = THREE.MathUtils.degToRad(23.439291);
 const spaceCameraPosition = new THREE.Vector3(-4.4, 2.6, 5.4);
 const sunCenterCameraPosition = new THREE.Vector3(-5.6, 3.2, 6.4);
 const moonCenterCameraPosition = new THREE.Vector3(-4.2, 2.5, 4.8);
@@ -195,8 +197,8 @@ const sun = new THREE.Mesh(
 );
 scene.add(sun);
 
-const moonOrbit = createOrbitRing(2.15, 0xb8c5c9, 0.28);
-const eclipticRing = createOrbitRing(EARTH_CENTER_SUN_DISTANCE, 0xf4bd58, 0.18);
+const moonOrbit = createOrbitRing(2.15, 0xd6e4e8, 0.52);
+const eclipticRing = createOrbitRing(EARTH_CENTER_SUN_DISTANCE, 0xffcf73, 0.38);
 scene.add(moonOrbit, eclipticRing);
 
 const sunLine = createRadialLine(0xf6c563, 0.55);
@@ -226,8 +228,8 @@ const southPoleMarker = new THREE.Mesh(
 const zenithLine = createRadialLine(0xfff1a8, 0.72);
 scene.add(observerMarker, subsolarMarker, sublunarMarker, northPoleMarker, southPoleMarker, zenithLine);
 
-const stars = createStars(720);
-scene.add(stars);
+const sky = createSky();
+scene.add(sky.group);
 
 const state = {
   date: new Date(),
@@ -380,6 +382,7 @@ function frame(now) {
   resize();
   syncCameraFov();
   updateBodies();
+  updateSky();
   updateReadout();
   updateCameraView();
   if (state.viewMode === "space") {
@@ -477,6 +480,7 @@ function updateBodies() {
     observerPosition,
     layout.earth.clone().add(observerWorldDirection.clone().multiplyScalar(1.18))
   ]);
+  sky.group.position.copy(layout.earth);
 }
 
 function updateReadout() {
@@ -822,7 +826,7 @@ function updateGraphicsControls() {
   sunLine.visible = ui.showLines.checked && !sunPov;
   moonLine.visible = ui.showLines.checked && !moonPov;
   zenithLine.visible = !earthPov && ui.showLines.checked && ui.showObserver.checked;
-  stars.visible = ui.showStars.checked;
+  sky.group.visible = ui.showStars.checked;
   sun.visible = ui.showSun.checked && !sunPov;
   moon.visible = ui.showMoon.checked && !moonPov;
   observerMarker.visible = !earthPov && ui.showObserver.checked;
@@ -909,31 +913,329 @@ function createRadialLine(color, opacity) {
 }
 
 function createStars(count) {
-  const positions = new Float32Array(count * 3);
-  for (let i = 0; i < count; i++) {
-    const z = Math.random() * 2 - 1;
-    const angle = Math.random() * Math.PI * 2;
-    const ring = Math.sqrt(1 - z * z);
-    const radius = 28;
-    positions[i * 3] = Math.cos(angle) * ring * radius;
-    positions[i * 3 + 1] = z * radius;
-    positions[i * 3 + 2] = Math.sin(angle) * ring * radius;
+  const stars = [];
+  for (const star of CONSTELLATION_STARS) {
+    stars.push(star);
   }
+  for (let i = 0; i < count; i++) {
+    stars.push({
+      id: `field-${i}`,
+      ra: seededRandom(i * 7 + 11) * 24,
+      dec: Math.asin(seededRandom(i * 7 + 17) * 2 - 1) * 180 / Math.PI,
+      mag: 2.2 + seededRandom(i * 7 + 23) * 4.4
+    });
+  }
+
+  const positions = new Float32Array(stars.length * 3);
+  const sizes = new Float32Array(stars.length);
+  const colors = new Float32Array(stars.length * 3);
+  for (let i = 0; i < stars.length; i++) {
+    const brightness = THREE.MathUtils.clamp((6.8 - stars[i].mag) / 7.8, 0.18, 1);
+    sizes[i] = 1.4 + brightness * 4.2;
+    colors[i * 3] = 0.72 + brightness * 0.28;
+    colors[i * 3 + 1] = 0.82 + brightness * 0.18;
+    colors[i * 3 + 2] = 0.95 + brightness * 0.05;
+  }
+
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute("size", new THREE.BufferAttribute(sizes, 1));
+  geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+  geometry.userData.stars = stars;
   return new THREE.Points(
     geometry,
-    new THREE.PointsMaterial({
-      color: 0xe7f4f6,
-      size: 2,
-      sizeAttenuation: false,
+    new THREE.ShaderMaterial({
       transparent: true,
-      opacity: 0.9,
+      opacity: 0.95,
       fog: false,
+      depthTest: true,
+      depthWrite: false,
+      vertexShader: `
+        attribute float size;
+        attribute vec3 color;
+        varying vec3 vColor;
+
+        void main() {
+          vColor = color;
+          vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+          gl_PointSize = size;
+          gl_Position = projectionMatrix * mvPosition;
+        }
+      `,
+      fragmentShader: `
+        varying vec3 vColor;
+
+        void main() {
+          vec2 centered = gl_PointCoord - vec2(0.5);
+          float dist = length(centered);
+          float alpha = smoothstep(0.5, 0.08, dist);
+          gl_FragColor = vec4(vColor, alpha);
+        }
+      `
+    })
+  );
+}
+
+function createSky() {
+  const group = new THREE.Group();
+  const stars = createStars(900);
+  const milkyWay = createMilkyWay();
+  const constellations = createConstellations();
+
+  group.add(milkyWay, constellations.group, stars);
+
+  return {
+    group,
+    stars,
+    milkyWay,
+    constellations
+  };
+}
+
+function updateSky() {
+  updateStarPoints(sky.stars);
+  updateMilkyWay(sky.milkyWay);
+  updateConstellations(sky.constellations);
+}
+
+function updateStarPoints(points) {
+  const positions = points.geometry.attributes.position;
+  const stars = points.geometry.userData.stars;
+
+  for (let i = 0; i < stars.length; i++) {
+    const direction = raDecToEarthFixedDirection(state.date, stars[i].ra, stars[i].dec);
+    positions.setXYZ(i, direction.x * SKY_RADIUS, direction.y * SKY_RADIUS, direction.z * SKY_RADIUS);
+  }
+
+  positions.needsUpdate = true;
+}
+
+function createMilkyWay() {
+  const samples = [];
+  for (let longitude = 0; longitude < 360; longitude += 2) {
+    const coreBias = Math.exp(-Math.pow(angularDifference(longitude, 0) / 34, 2));
+    const antiCoreBias = Math.exp(-Math.pow(angularDifference(longitude, 180) / 58, 2));
+    const laneCount = 4 + Math.round(coreBias * 10 + antiCoreBias * 3);
+
+    for (let lane = 0; lane < laneCount; lane++) {
+      const seed = longitude * 31 + lane * 101;
+      const latitude = (seededRandom(seed) - 0.5) * (10 + 20 * seededRandom(seed + 1));
+      samples.push({
+        vector: galacticToEquatorialVector(longitude + (seededRandom(seed + 2) - 0.5) * 1.8, latitude),
+        intensity: 0.12 + coreBias * 0.64 + antiCoreBias * 0.18 + seededRandom(seed + 3) * 0.18
+      });
+    }
+  }
+
+  const positions = new Float32Array(samples.length * 3);
+  const colors = new Float32Array(samples.length * 3);
+  const sizes = new Float32Array(samples.length);
+
+  for (let i = 0; i < samples.length; i++) {
+    const intensity = THREE.MathUtils.clamp(samples[i].intensity, 0.08, 1);
+    sizes[i] = 18 + intensity * 42;
+    colors[i * 3] = 0.45 + intensity * 0.45;
+    colors[i * 3 + 1] = 0.50 + intensity * 0.38;
+    colors[i * 3 + 2] = 0.60 + intensity * 0.24;
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+  geometry.setAttribute("size", new THREE.BufferAttribute(sizes, 1));
+  geometry.userData.samples = samples;
+
+  return new THREE.Points(
+    geometry,
+    new THREE.ShaderMaterial({
+      transparent: true,
+      opacity: 0.42,
+      fog: false,
+      depthTest: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      vertexShader: `
+        attribute float size;
+        attribute vec3 color;
+        varying vec3 vColor;
+
+        void main() {
+          vColor = color;
+          gl_PointSize = size;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        varying vec3 vColor;
+
+        void main() {
+          float dist = length(gl_PointCoord - vec2(0.5));
+          float alpha = smoothstep(0.5, 0.0, dist);
+          gl_FragColor = vec4(vColor, alpha * 0.28);
+        }
+      `
+    })
+  );
+}
+
+function updateMilkyWay(points) {
+  const positions = points.geometry.attributes.position;
+  const samples = points.geometry.userData.samples;
+
+  for (let i = 0; i < samples.length; i++) {
+    const direction = equatorialVectorToEarthFixedDirection(state.date, samples[i].vector);
+    positions.setXYZ(i, direction.x * SKY_RADIUS, direction.y * SKY_RADIUS, direction.z * SKY_RADIUS);
+  }
+
+  positions.needsUpdate = true;
+}
+
+function createConstellations() {
+  const group = new THREE.Group();
+  const starById = new Map(CONSTELLATION_STARS.map((star) => [star.id, star]));
+  const lineEntries = [];
+  const labelEntries = [];
+
+  for (const constellation of CONSTELLATIONS) {
+    const positions = new Float32Array(constellation.segments.length * 2 * 3);
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    const line = new THREE.LineSegments(
+      geometry,
+      new THREE.LineBasicMaterial({
+        color: 0x9ec7d8,
+        transparent: true,
+        opacity: 0.38,
+        fog: false,
+        depthTest: true,
+        depthWrite: false
+      })
+    );
+    line.userData.constellation = constellation;
+    group.add(line);
+    lineEntries.push(line);
+
+    const labelStars = constellation.label.map((id) => starById.get(id)).filter(Boolean);
+    if (labelStars.length > 0) {
+      const label = createTextSprite(constellation.name);
+      label.userData.stars = labelStars;
+      group.add(label);
+      labelEntries.push(label);
+    }
+  }
+
+  return { group, lineEntries, labelEntries, starById };
+}
+
+function updateConstellations(constellations) {
+  for (const line of constellations.lineEntries) {
+    const positions = line.geometry.attributes.position;
+    let index = 0;
+
+    for (const [fromId, toId] of line.userData.constellation.segments) {
+      const from = constellations.starById.get(fromId);
+      const to = constellations.starById.get(toId);
+      const fromDirection = raDecToEarthFixedDirection(state.date, from.ra, from.dec);
+      const toDirection = raDecToEarthFixedDirection(state.date, to.ra, to.dec);
+      positions.setXYZ(index++, fromDirection.x * SKY_RADIUS, fromDirection.y * SKY_RADIUS, fromDirection.z * SKY_RADIUS);
+      positions.setXYZ(index++, toDirection.x * SKY_RADIUS, toDirection.y * SKY_RADIUS, toDirection.z * SKY_RADIUS);
+    }
+
+    positions.needsUpdate = true;
+  }
+
+  for (const label of constellations.labelEntries) {
+    const center = new THREE.Vector3();
+    for (const star of label.userData.stars) {
+      center.add(raDecToEarthFixedDirection(state.date, star.ra, star.dec));
+    }
+    center.normalize().multiplyScalar(SKY_RADIUS * 0.985);
+    label.position.copy(center);
+  }
+}
+
+function createTextSprite(text) {
+  const scale = 2;
+  const canvasLabel = document.createElement("canvas");
+  canvasLabel.width = 256 * scale;
+  canvasLabel.height = 56 * scale;
+  const context = canvasLabel.getContext("2d");
+  context.scale(scale, scale);
+  context.font = "600 18px system-ui, -apple-system, Segoe UI, sans-serif";
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillStyle = "rgba(237, 245, 244, 0.82)";
+  context.shadowColor = "rgba(0, 0, 0, 0.85)";
+  context.shadowBlur = 5;
+  context.fillText(text, 128, 28);
+
+  const texture = new THREE.CanvasTexture(canvasLabel);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: texture,
+      transparent: true,
+      opacity: 0.66,
       depthTest: true,
       depthWrite: false
     })
   );
+  sprite.scale.set(2.4, 0.52, 1);
+  return sprite;
+}
+
+function raDecToEarthFixedDirection(date, rightAscensionHours, declinationDeg) {
+  const rightAscension = THREE.MathUtils.degToRad(rightAscensionHours * 15);
+  const declination = THREE.MathUtils.degToRad(declinationDeg);
+  return equatorialVectorToEarthFixedDirection(date, {
+    x: Math.cos(declination) * Math.cos(rightAscension),
+    y: Math.cos(declination) * Math.sin(rightAscension),
+    z: Math.sin(declination)
+  });
+}
+
+function equatorialVectorToEarthFixedDirection(date, vector) {
+  const basis = equatorialBasisToEcliptic(date);
+  const ecliptic = equatorialToEclipticThree(vector);
+  return new THREE.Vector3(
+    ecliptic.dot(vectorToThree(basis.greenwich)),
+    ecliptic.dot(vectorToThree(basis.north)),
+    ecliptic.dot(vectorToThree(basis.west90))
+  ).normalize();
+}
+
+function equatorialToEclipticThree(vector) {
+  return new THREE.Vector3(
+    vector.x,
+    -vector.y * Math.sin(OBLIQUITY) + vector.z * Math.cos(OBLIQUITY),
+    vector.y * Math.cos(OBLIQUITY) + vector.z * Math.sin(OBLIQUITY)
+  ).normalize();
+}
+
+function galacticToEquatorialVector(longitudeDeg, latitudeDeg) {
+  const longitude = THREE.MathUtils.degToRad(longitudeDeg);
+  const latitude = THREE.MathUtils.degToRad(latitudeDeg);
+  const cosLatitude = Math.cos(latitude);
+  const galactic = {
+    x: cosLatitude * Math.cos(longitude),
+    y: cosLatitude * Math.sin(longitude),
+    z: Math.sin(latitude)
+  };
+
+  return {
+    x: -0.0548755604 * galactic.x + 0.4941094279 * galactic.y - 0.8676661490 * galactic.z,
+    y: -0.8734370902 * galactic.x - 0.4448296300 * galactic.y - 0.1980763734 * galactic.z,
+    z: -0.4838350155 * galactic.x + 0.7469822445 * galactic.y + 0.4559837762 * galactic.z
+  };
+}
+
+function angularDifference(a, b) {
+  return Math.abs(((a - b + 540) % 360) - 180);
+}
+
+function seededRandom(seed) {
+  const value = Math.sin(seed * 12.9898) * 43758.5453;
+  return value - Math.floor(value);
 }
 
 function createMoonTexture(size) {
