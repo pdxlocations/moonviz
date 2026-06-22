@@ -35,6 +35,7 @@ const ui = {
   povFov: document.querySelector("#povFov"),
   povFovValue: document.querySelector("#povFovValue"),
   contrast: document.querySelector("#contrast"),
+  showEarth: document.querySelector("#showEarth"),
   showOrbits: document.querySelector("#showOrbits"),
   showLines: document.querySelector("#showLines"),
   showStars: document.querySelector("#showStars"),
@@ -820,7 +821,7 @@ function updateGraphicsControls() {
   const sunPov = pov && state.centerMode === "sun";
   const moonPov = pov && state.centerMode === "moon";
 
-  earth.visible = !pov || sunPov || moonPov;
+  earth.visible = ui.showEarth.checked && (!pov || sunPov || moonPov);
   moonOrbit.visible = ui.showOrbits.checked;
   eclipticRing.visible = ui.showOrbits.checked;
   sunLine.visible = ui.showLines.checked && !sunPov;
@@ -838,6 +839,7 @@ function updateGraphicsControls() {
 
 function graphicsCheckboxes() {
   return [
+    ui.showEarth,
     ui.showOrbits,
     ui.showLines,
     ui.showStars,
@@ -978,7 +980,7 @@ function createStars(count) {
 
 function createSky() {
   const group = new THREE.Group();
-  const stars = createStars(900);
+  const stars = createStars(1500);
   const milkyWay = createMilkyWay();
   const constellations = createConstellations();
 
@@ -1012,17 +1014,16 @@ function updateStarPoints(points) {
 
 function createMilkyWay() {
   const samples = [];
-  for (let longitude = 0; longitude < 360; longitude += 2) {
-    const coreBias = Math.exp(-Math.pow(angularDifference(longitude, 0) / 34, 2));
-    const antiCoreBias = Math.exp(-Math.pow(angularDifference(longitude, 180) / 58, 2));
-    const laneCount = 4 + Math.round(coreBias * 10 + antiCoreBias * 3);
+  for (let longitude = 0; longitude < 360; longitude += 1) {
+    const structure = 0.5 + 0.5 * Math.sin(THREE.MathUtils.degToRad(longitude * 2.4 + 35));
+    const laneCount = 7 + Math.round(structure * 4);
 
     for (let lane = 0; lane < laneCount; lane++) {
       const seed = longitude * 31 + lane * 101;
-      const latitude = (seededRandom(seed) - 0.5) * (10 + 20 * seededRandom(seed + 1));
+      const latitude = (seededRandom(seed) - 0.5) * (6 + 15 * seededRandom(seed + 1));
       samples.push({
         vector: galacticToEquatorialVector(longitude + (seededRandom(seed + 2) - 0.5) * 1.8, latitude),
-        intensity: 0.12 + coreBias * 0.64 + antiCoreBias * 0.18 + seededRandom(seed + 3) * 0.18
+        intensity: 0.18 + structure * 0.16 + seededRandom(seed + 3) * 0.22
       });
     }
   }
@@ -1033,10 +1034,10 @@ function createMilkyWay() {
 
   for (let i = 0; i < samples.length; i++) {
     const intensity = THREE.MathUtils.clamp(samples[i].intensity, 0.08, 1);
-    sizes[i] = 18 + intensity * 42;
-    colors[i * 3] = 0.45 + intensity * 0.45;
-    colors[i * 3 + 1] = 0.50 + intensity * 0.38;
-    colors[i * 3 + 2] = 0.60 + intensity * 0.24;
+    sizes[i] = 1.7 + intensity * 3.4;
+    colors[i * 3] = 0.56 + intensity * 0.18;
+    colors[i * 3 + 1] = 0.61 + intensity * 0.16;
+    colors[i * 3 + 2] = 0.70 + intensity * 0.12;
   }
 
   const geometry = new THREE.BufferGeometry();
@@ -1049,11 +1050,11 @@ function createMilkyWay() {
     geometry,
     new THREE.ShaderMaterial({
       transparent: true,
-      opacity: 0.42,
+      opacity: 0.68,
       fog: false,
       depthTest: true,
       depthWrite: false,
-      blending: THREE.AdditiveBlending,
+      blending: THREE.NormalBlending,
       vertexShader: `
         attribute float size;
         attribute vec3 color;
@@ -1070,8 +1071,8 @@ function createMilkyWay() {
 
         void main() {
           float dist = length(gl_PointCoord - vec2(0.5));
-          float alpha = smoothstep(0.5, 0.0, dist);
-          gl_FragColor = vec4(vColor, alpha * 0.28);
+          float alpha = smoothstep(0.5, 0.18, dist);
+          gl_FragColor = vec4(vColor, alpha * 0.55);
         }
       `
     })
@@ -1227,10 +1228,6 @@ function galacticToEquatorialVector(longitudeDeg, latitudeDeg) {
     y: -0.8734370902 * galactic.x - 0.4448296300 * galactic.y - 0.1980763734 * galactic.z,
     z: -0.4838350155 * galactic.x + 0.7469822445 * galactic.y + 0.4559837762 * galactic.z
   };
-}
-
-function angularDifference(a, b) {
-  return Math.abs(((a - b + 540) % 360) - 180);
 }
 
 function seededRandom(seed) {
